@@ -4,7 +4,8 @@ import { createClient, type RealtimeChannel, type SupabaseClient } from "@supaba
 import type { ChatMessageInfo } from "@/lib/types";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const ANON =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
 
 /** Supabase Realtime anahtarları tarayıcıya açık mı? */
 export const realtimeConfigured = Boolean(URL && ANON);
