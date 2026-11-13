@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #06030c;
+  --color-ink2: #0d0618;
+  --color-ink3: #150a26;
+  --color-gold: #f5c542;
+  --color-goldsoft: #ffd97a;
+  --color-violet: #7c3aed;
+  --color-violetsoft: #a855f7;
+  --color-neon: #ff2fb9;
+  --font-display: "Bakbak One", "Outfit", system-ui, sans-serif;
+  --font-body: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  background-color: var(--color-ink);
+  color: #f4f0ff;
+  font-family: var(--font-body);
+}
+
+body {
+  background-image:
+    radial-gradient(900px 500px at 12% -8%, rgba(124, 58, 237, 0.35), transparent 60%),
+    radial-gradient(800px 480px at 88% 0%, rgba(255, 47, 185, 0.22), transparent 60%),
+    radial-gradient(700px 700px at 50% 110%, rgba(245, 197, 66, 0.14), transparent 60%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: var(--color-gold);
+  color: #0a0512;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+}
+
+.glass {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(14px);
+}
+
+.glass-dark {
+  background: linear-gradient(160deg, rgba(13, 6, 24, 0.92), rgba(6, 3, 12, 0.86));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.gold-text {
+  background: linear-gradient(180deg, #fff6d8 0%, #f5c542 45%, #b8860b 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.neon-ring {
+  box-shadow:
+    0 0 0 1px rgba(245, 197, 66, 0.4),
+    0 0 28px rgba(168, 85, 247, 0.35),
+    inset 0 0 40px rgba(124, 58, 237, 0.12);
+}
+
+.btn-gold {
+  background: linear-gradient(180deg, #ffdf8a, #f5c542 55%, #d19b18);
+  color: #1a0f00;
+  box-shadow: 0 10px 30px -10px rgba(245, 197, 66, 0.8);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.btn-gold:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+.btn-gold:disabled {
+  filter: grayscale(0.6) brightness(0.7);
+  transform: none;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(245, 197, 66, 0.5);
+}
+
+.live-dot {
+  animation: livePulse 1.4s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  50% {
+    opacity: 0.65;
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}
+
+.float-slow {
+  animation: floaty 6s ease-in-out infinite;
+}
+
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.marquee-track {
+  animation: marquee 26s linear infinite;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 85, 247, 0.6) transparent;
+}
+.chat-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(168, 85, 247, 0.8), rgba(245, 197, 66, 0.7));
+  border-radius: 999px;
+}
+
+.grid-lines {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
