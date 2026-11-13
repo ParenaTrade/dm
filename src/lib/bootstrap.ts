@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { moderators, giveaways, scheduleItems, streams, users } from "@/db/schema";
+import { giveaways, scheduleItems, streams } from "@/db/schema";
 
 /**
  * Supabase / Vercel'de sıfırdan çalışabilmesi için tablolar idempotent şekilde
@@ -11,6 +11,8 @@ const DDL = [
     id serial PRIMARY KEY,
     nickname text NOT NULL,
     nickname_lower text NOT NULL,
+    email text,
+    avatar_url text,
     role text NOT NULL DEFAULT 'viewer',
     accent text NOT NULL DEFAULT '#a855f7',
     is_vip boolean NOT NULL DEFAULT false,
@@ -20,7 +22,11 @@ const DDL = [
     created_at timestamptz NOT NULL DEFAULT now(),
     last_seen_at timestamptz NOT NULL DEFAULT now()
   )`,
-  sql`CREATE UNIQUE INDEX IF NOT EXISTS users_nickname_lower_idx ON users (nickname_lower)`,
+  sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email text`,
+  sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text`,
+  sql`DROP INDEX IF EXISTS users_nickname_lower_idx`,
+  sql`CREATE INDEX IF NOT EXISTS users_nickname_idx ON users (nickname_lower)`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx ON users (email)`,
   sql`CREATE TABLE IF NOT EXISTS sessions (
     id serial PRIMARY KEY,
     token text NOT NULL,
@@ -85,6 +91,7 @@ const DDL = [
   sql`CREATE TABLE IF NOT EXISTS moderators (
     id serial PRIMARY KEY,
     nickname_lower text NOT NULL,
+    email text,
     nickname text NOT NULL,
     added_by text NOT NULL DEFAULT 'Berkbey',
     can_delete boolean NOT NULL DEFAULT true,
@@ -92,7 +99,9 @@ const DDL = [
     note text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now()
   )`,
-  sql`CREATE UNIQUE INDEX IF NOT EXISTS moderators_nickname_idx ON moderators (nickname_lower)`,
+  sql`ALTER TABLE moderators ADD COLUMN IF NOT EXISTS email text`,
+  sql`DROP INDEX IF EXISTS moderators_nickname_idx`,
+  sql`CREATE UNIQUE INDEX IF NOT EXISTS moderators_email_idx ON moderators (email)`,
   sql`CREATE TABLE IF NOT EXISTS schedule_items (
     id serial PRIMARY KEY,
     day text NOT NULL,
@@ -128,50 +137,16 @@ async function runBootstrap() {
     await db.execute(statement);
   }
 
-  // ---- seed ----
-  await db
-    .insert(users)
-    .values({
-      nickname: "Berkbey",
-      nicknameLower: "berkbey",
-      role: "host",
-      accent: "#f5c542",
-      isVip: true,
-    })
-    .onConflictDoNothing();
-
-  const mods = [
-    { nickname: "AyseMod", note: "Sohbet moderatörü" },
-    { nickname: "KralModer", note: "Gece vardiyası" },
-    { nickname: "NeoBerk", note: "Konuk onaylama" },
-  ];
-  for (const mod of mods) {
-    await db
-      .insert(moderators)
-      .values({
-        nickname: mod.nickname,
-        nicknameLower: mod.nickname.toLocaleLowerCase("tr"),
-        addedBy: "Berkbey",
-        note: mod.note,
-      })
-      .onConflictDoNothing();
-    await db
-      .insert(users)
-      .values({
-        nickname: mod.nickname,
-        nicknameLower: mod.nickname.toLocaleLowerCase("tr"),
-        role: "moderator",
-        accent: "#22d3ee",
-      })
-      .onConflictDoNothing();
-  }
+  // ---- eski demo hesapları temizle (yalnızca Google hesabı olan yetkililer kalır) ----
+  await db.execute(sql`DELETE FROM moderators WHERE email IS NULL`);
+  await db.execute(sql`UPDATE users SET role = 'viewer' WHERE email IS NULL AND role IN ('host', 'moderator')`);
 
   const existingStreams = await db.select({ id: streams.id }).from(streams).limit(1);
   if (!existingStreams[0]) {
     await db.insert(streams).values({
-      title: "Berkbey ile Canlı Sohbet & Casino Keyfi",
+      title: "Berkbey Canlı Yayın — Spor, Oyun, Eğlence & Sohbet",
       category: "Sohbet",
-      description: "Birlikte daha eğlenceli! Yayına katıl, sohbete yaz, konuk ol ve çekilişlere sende katıl.",
+      description: "Birlikte daha eğlenceli! Maç yorumu, oyun, eğlence ve sohbet için yayına katıl.",
       guestCode: "BERK24",
       hostNickname: "Berkbey",
     });

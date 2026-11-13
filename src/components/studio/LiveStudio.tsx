@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatPanel } from "./ChatPanel";
 import { VideoTile } from "./VideoTile";
+import { SelfPip } from "./SelfPip";
+import { SystemStatusButton } from "../SystemStatusButton";
+import { exchangeGoogleSession, googleAuthConfigured, signInWithGoogle, signOutGoogle } from "@/lib/auth-client";
 import { useLiveEngine } from "./useLiveEngine";
 import {
   joinStreamChannel,
@@ -13,34 +16,23 @@ import {
   type PresencePayload,
   type StreamBroadcast,
 } from "@/lib/realtime-client";
-import type { ChatMessageInfo, ParticipantInfo, StreamInfo } from "@/lib/types";
-
-type AppUser = {
-  id: number;
-  nickname: string;
-  role: string;
-  accent: string;
-  isVip: boolean;
-};
+import type { AppUser, ChatMessageInfo, ParticipantInfo, StreamInfo } from "@/lib/types";
 
 type Settings = {
   title: string;
   category: string;
   description: string;
-  guestCode: string;
   slowModeSeconds: number;
   chatLocked: boolean;
   guestLimit: number;
 };
 
-const CATEGORIES = ["Sohbet", "Casino", "Oyun", "Konuk Programı", "Çekiliş", "Turnuva"];
+const CATEGORIES = ["Sohbet", "Spor", "Maç Yorumu", "Oyun", "Eğlence", "Konuk Programı", "Çekiliş"];
 
 export function LiveStudio() {
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
-  const [nickname, setNickname] = useState("");
-  const [hostPassword, setHostPassword] = useState("");
-  const [showHostPass, setShowHostPass] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [stream, setStream] = useState<StreamInfo | null>(null);
@@ -48,7 +40,7 @@ export function LiveStudio() {
   const [me, setMe] = useState<ParticipantInfo | null>(null);
   const [messages, setMessages] = useState<ChatMessageInfo[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [guestCodeInput, setGuestCodeInput] = useState("");
+  const [guestCamOff, setGuestCamOff] = useState(false);
   const [guestDialog, setGuestDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [micOn, setMicOn] = useState(false);
@@ -61,13 +53,13 @@ export function LiveStudio() {
     title: "",
     category: "Sohbet",
     description: "",
-    guestCode: "",
     slowModeSeconds: 0,
     chatLocked: false,
     guestLimit: 3,
   });
   const [tick, setTick] = useState(0);
 
+  const autoMediaRef = useRef(false);
   const chatCursor = useRef(0);
   const channelRef = useRef<ReturnType<typeof joinStreamChannel> | null>(null);
   const userRef = useRef<AppUser | null>(null);
@@ -111,14 +103,21 @@ export function LiveStudio() {
     }
   }, []);
 
-  /* ---------------- auth ---------------- */
+  /* ---------------- auth (yalnızca Google) ---------------- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch("/api/auth", { cache: "no-store" });
         const data = await res.json();
-        if (!cancelled && data.user) setUser(data.user);
+        if (data.user) {
+          if (!cancelled) setUser(data.user as AppUser);
+          return;
+        }
+        const exchanged = await exchangeGoogleSession();
+        if (cancelled) return;
+        if (exchanged?.user) setUser(exchanged.user);
+        else if (exchanged?.error) setAuthError(exchanged.error);
       } catch {
         /* noop */
       } finally {
@@ -130,27 +129,38 @@ export function LiveStudio() {
     };
   }, []);
 
+  /* Giriş ekranında aktif yayın odasını göster */
+  useEffect(() => {
+    if (user || authLoading) return;
+    void fetch("/api/stream", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => d.ok && setStream(d.stream as StreamInfo))
+      .catch(() => undefined);
+  }, [user, authLoading]);
+
   const login = async () => {
     setAuthError(null);
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nickname, hostPassword: showHostPass ? hostPassword : undefined }),
-    });
-    const data = await res.json();
-    if (!data.ok) {
-      setAuthError(data.error ?? "Giriş başarısız");
-      return;
+    setAuthBusy(true);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setAuthBusy(false);
+      setAuthError(err instanceof Error ? err.message : "Google girişi başlatılamadı");
     }
-    setUser(data.user);
   };
 
   const logout = async () => {
-    await fetch("/api/auth", { method: "DELETE" });
-    setUser(null);
-    setMessages([]);
-    chatCursor.current = 0;
     await engine.setMedia("off");
+    await fetch("/api/auth", { method: "DELETE" });
+    await signOutGoogle();
+    autoMediaRef.current = false;
+    setUser(null);
+    setStream(null);
+    setMe(null);
+    setMessages([]);
+    setCamOn(false);
+    setMicOn(false);
+    chatCursor.current = 0;
   };
 
   /* ---------------- api helper ---------------- */
@@ -267,7 +277,7 @@ export function LiveStudio() {
       void streamAction({
         action: "heartbeat",
         patch: {
-          cameraOn: engine.mediaKind !== "off",
+          cameraOn: engine.mediaKind !== "off" && camOn,
           micOn,
           handRaised,
           isScreenSharing: engine.mediaKind === "screen",
@@ -275,7 +285,7 @@ export function LiveStudio() {
       });
     }, 5000);
     return () => clearInterval(timer);
-  }, [user?.id, me?.id, engine.mediaKind, micOn, handRaised, streamAction, me, user]);
+  }, [user?.id, me?.id, engine.mediaKind, camOn, micOn, handRaised, streamAction, me, user]);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 1000);
@@ -288,7 +298,6 @@ export function LiveStudio() {
       title: stream.title,
       category: stream.category,
       description: stream.description,
-      guestCode: stream.guestCode,
       slowModeSeconds: stream.slowModeSeconds,
       chatLocked: stream.chatLocked,
       guestLimit: stream.guestLimit,
@@ -316,20 +325,21 @@ export function LiveStudio() {
   };
 
   const requestGuest = async () => {
-    const res = await streamAction({ action: "join", as: "guest", code: guestCodeInput });
+    const res = await streamAction({ action: "join", as: "guest" });
     if (!res.ok) {
       setNotice(res.error ?? "Konuk isteği gönderilemedi");
       return;
     }
     setGuestDialog(false);
-    setNotice("Konuk isteğin gönderildi, yayıncının onayı bekleniyor. 🎤");
+    setNotice("Konuk isteğin gönderildi, yayıncı/moderatör onayı bekleniyor. 🎤");
   };
 
   const leaveStage = async () => {
     await engine.setMedia("off");
     setCamOn(false);
     setMicOn(false);
-    await streamAction({ action: "join", as: "viewer" });
+    autoMediaRef.current = false;
+    await streamAction({ action: "join", as: "demote" });
     setNotice("Konuk koltuğundan ayrıldın.");
   };
 
@@ -408,7 +418,7 @@ export function LiveStudio() {
     const res = await fetch("/api/moderators", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nickname: modInput.trim() }),
+      body: JSON.stringify({ email: modInput.trim() }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -459,10 +469,48 @@ export function LiveStudio() {
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }, [stream?.startedAt, tick]);
 
-  const copyCode = () => {
-    if (!stream) return;
-    void navigator.clipboard?.writeText(stream.guestCode);
-    setNotice(`Konuk kodu kopyalandı: ${stream.guestCode}`);
+  const onStageGuest = me?.role === "guest" && me.status === "live";
+  const isMod = user?.role === "moderator";
+
+  /* Moderatör girişinde kamera otomatik açılır (mikrofon kapalı); sahneye alınan konuk da kamerasını açar. */
+  useEffect(() => {
+    if (!user || isHost) return;
+    if (isMod || onStageGuest) {
+      if (autoMediaRef.current) return;
+      autoMediaRef.current = true;
+      const videoOff = !isMod && guestCamOff;
+      void engine.setMedia("camera", { muted: isMod, videoOff }).then(() => {
+        setCamOn(!videoOff);
+        setMicOn(!isMod);
+      });
+    } else if (autoMediaRef.current) {
+      autoMediaRef.current = false;
+      void engine.setMedia("off");
+      setCamOn(false);
+      setMicOn(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, isHost, isMod, onStageGuest, guestCamOff]);
+
+  const toggleMic = () => {
+    if (engine.mediaKind === "off") {
+      void engine.setMedia("camera");
+      setCamOn(true);
+      setMicOn(true);
+    } else {
+      engine.toggleAudio();
+      setMicOn((v) => !v);
+    }
+  };
+
+  const toggleCam = () => {
+    if (engine.mediaKind === "off") {
+      void engine.setMedia("camera");
+      setCamOn(true);
+    } else {
+      engine.toggleVideo();
+      setCamOn((c) => !c);
+    }
   };
 
   /* ---------------- views ---------------- */
@@ -475,56 +523,53 @@ export function LiveStudio() {
   }
 
   if (!user) {
+    const roomLive = stream?.status === "live";
     return (
       <div className="flex min-h-screen items-center justify-center px-4 py-16">
         <div className="glass neon-ring w-full max-w-md rounded-3xl p-7">
           <p className="font-display gold-text text-3xl">Stüdyoya Gir</p>
           <p className="mt-2 text-sm text-white/60">
-            Takma adını yaz, sohbete katıl. Konuk olmak için kod gerekiyor.
+            Yayıncı, moderatör, konuk ve izleyici girişi yalnızca Google hesabı ile yapılır. Aşağıdaki canlı yayın
+            odasına tıklayarak giriş yap.
           </p>
 
-          <div className="mt-6 space-y-3">
-            <input
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void login()}
-              placeholder="Takma adın (örn. GoldFan)"
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-gold/50"
-            />
-            {showHostPass && (
-              <input
-                value={hostPassword}
-                onChange={(e) => setHostPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void login()}
-                placeholder="Yayıncı şifresi"
-                className="w-full rounded-xl border border-gold/30 bg-black/40 px-4 py-3 outline-none focus:border-gold"
-              />
-            )}
-            <button
-              onClick={() => setShowHostPass((v) => !v)}
-              className="text-xs text-white/45 underline-offset-2 hover:underline"
-            >
-              {showHostPass ? "Yayıncı girişini kapat" : "Yayıncı (host) olarak giriş yap"}
-            </button>
-            {authError && <p className="text-sm text-red-300">{authError}</p>}
-            <button onClick={() => void login()} className="btn-gold w-full rounded-xl py-3 font-bold">
-              Yayına Katıl
-            </button>
-            <p className="text-center text-xs text-white/40">
-              Demo yayıncı şifresi: <span className="text-gold">berkbey</span> · Konuk kodu:{" "}
-              <span className="text-gold">BERK24</span>
+          <button
+            onClick={() => void login()}
+            disabled={authBusy || !googleAuthConfigured}
+            className="mt-6 flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-black/40 p-4 text-left transition hover:border-gold/60 disabled:opacity-60"
+          >
+            <span className="min-w-0">
+              <span className="block truncate font-semibold">{stream?.title ?? "Berkbey Canlı Yayın"}</span>
+              <span className="mt-1 flex items-center gap-2 text-xs text-white/55">
+                <span
+                  className={`h-2 w-2 rounded-full ${roomLive ? "live-dot bg-red-500" : "bg-white/40"}`}
+                />
+                {roomLive ? "Canlı yayın odası aktif" : "Yayın odası (şu an yayın dışı)"}
+              </span>
+            </span>
+            <span className="shrink-0 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black">
+              {authBusy ? "Yönlendiriliyor…" : "G · Google ile gir"}
+            </span>
+          </button>
+
+          {!googleAuthConfigured && (
+            <p className="mt-3 text-sm text-amber-300">
+              Google girişi henüz yapılandırılmamış (NEXT_PUBLIC_SUPABASE_URL / ANON_KEY).
             </p>
-            <Link href="/" className="block text-center text-xs text-white/45 hover:text-gold">
-              ← Ana sayfaya dön
-            </Link>
-          </div>
+          )}
+          {authError && <p className="mt-3 text-sm text-red-300">{authError}</p>}
+          <Link href="/" className="mt-5 block text-center text-xs text-white/45 hover:text-gold">
+            ← Ana sayfaya dön
+          </Link>
         </div>
       </div>
     );
   }
 
-  const myTileStream = engine.localStream;
-  const myRole = me?.role ?? (isHost ? "host" : "viewer");
+  const hostP = participants.find((p) => p.role === "host" && p.status === "live");
+  const canPublish = isHost || isMod || onStageGuest;
+  const showPip = !isHost && (isMod || onStageGuest);
+  const stageOthers = liveOthers.filter((p) => p.role === "guest" || p.role === "moderator");
 
   return (
     <div className="mx-auto grid max-w-[1560px] gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_390px] lg:p-5">
@@ -544,7 +589,7 @@ export function LiveStudio() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <span
               className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 font-bold ${
                 stream?.status === "live" ? "bg-red-600 text-white" : "bg-white/10 text-white/60"
@@ -554,20 +599,26 @@ export function LiveStudio() {
               {stream?.status === "live" ? "CANLI" : "YAYIN DIŞI"}
             </span>
             <span className="rounded-full bg-white/10 px-3 py-1.5">👁 {liveCount}</span>
-            <span className="rounded-full bg-white/10 px-3 py-1.5">🎙 {liveOthers.filter((p) => p.role === "guest").length} konuk</span>
-            {elapsed && <span className="rounded-full bg-white/10 px-3 py-1.5 tabular-nums">⏱ {elapsed}</span>}
-            <span
-              className={`rounded-full px-3 py-1.5 ring-1 ${
-                realtimeLive
-                  ? "bg-emerald-500/20 text-emerald-200 ring-emerald-400/40"
-                  : "bg-white/10 text-white/60 ring-white/20"
-              }`}
-              title={realtimeConfigured ? "Supabase Realtime" : "Supabase Realtime anahtarları tanımlı değil"}
-            >
-              {realtimeLive ? "⚡ REALTIME" : rtStatus === "connecting" ? "⚡ BAĞLANIYOR" : "↻ POOLING"}
+            <span className="rounded-full bg-white/10 px-3 py-1.5">
+              🎙 {participants.filter((p) => p.status === "live" && p.role === "guest").length} konuk
             </span>
+            {elapsed && <span className="rounded-full bg-white/10 px-3 py-1.5 tabular-nums">⏱ {elapsed}</span>}
+            {isStaff ? (
+              <span
+                className={`rounded-full px-3 py-1.5 ring-1 ${
+                  realtimeLive
+                    ? "bg-emerald-500/20 text-emerald-200 ring-emerald-400/40"
+                    : "bg-white/10 text-white/60 ring-white/20"
+                }`}
+                title={realtimeConfigured ? "Supabase Realtime" : "Supabase Realtime anahtarları tanımlı değil"}
+              >
+                {realtimeLive ? "⚡ REALTIME" : rtStatus === "connecting" ? "⚡ BAĞLANIYOR" : "↻ POOLING"}
+              </span>
+            ) : (
+              <SystemStatusButton />
+            )}
             <span className={`rounded-full px-3 py-1.5 ring-1 ${isStaff ? "bg-cyan-500/20 text-cyan-200 ring-cyan-400/40" : "bg-white/10 text-white/60"}`}>
-              {isHost ? "Yayıncı" : user.role === "moderator" ? "Moderatör" : me?.role === "guest" ? "Konuk" : "İzleyici"}
+              {isHost ? "Yayıncı" : isMod ? "Moderatör" : me?.role === "guest" ? "Konuk" : "İzleyici"} · {user.nickname}
             </span>
             {isStaff && (
               <button onClick={() => setShowSettings((v) => !v)} className="btn-ghost rounded-full px-3 py-1.5">
@@ -581,9 +632,7 @@ export function LiveStudio() {
         </div>
 
         {engine.error && (
-          <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">
-            {engine.error}
-          </p>
+          <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">{engine.error}</p>
         )}
         {notice && (
           <p className="rounded-xl border border-gold/30 bg-gold/10 px-4 py-2 text-sm text-goldsoft">{notice}</p>
@@ -613,14 +662,6 @@ export function LiveStudio() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="text-xs text-white/60">
-              Konuk kodu
-              <input
-                value={settings.guestCode}
-                onChange={(e) => setSettings({ ...settings, guestCode: e.target.value.toUpperCase() })}
-                className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-gold/50"
-              />
             </label>
             <label className="text-xs text-white/60">
               Konuk koltuğu: {settings.guestLimit}
@@ -656,7 +697,7 @@ export function LiveStudio() {
                 Sohbet kilidi
               </label>
             </div>
-            <div className="sm:col-span-2 flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 sm:col-span-2">
               <button onClick={() => void saveSettings()} className="btn-gold rounded-xl px-5 py-2 text-sm font-bold">
                 Kaydet
               </button>
@@ -665,7 +706,7 @@ export function LiveStudio() {
                   <input
                     value={modInput}
                     onChange={(e) => setModInput(e.target.value)}
-                    placeholder="Moderatör ekle (takma ad)"
+                    placeholder="Moderatör ekle (Google e-postası)"
                     className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400/50"
                   />
                   <button onClick={() => void addModerator()} className="btn-ghost rounded-xl px-4 py-2 text-sm">
@@ -677,45 +718,88 @@ export function LiveStudio() {
           </div>
         )}
 
-        {/* STAGE */}
+        {/* STAGE: ana ekran = canlı yayın görüntüsü; mod/konuk kamerası sol üstte küçük kare */}
         <div className="rounded-3xl border border-white/10 bg-black/40 p-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className={liveOthers.length ? "md:col-span-2" : "md:col-span-2"}>
+          <div className="relative">
+            {isHost ? (
               <VideoTile
-                stream={myTileStream}
-                label={`${user.nickname} (sen)`}
-                role={myRole}
+                stream={engine.localStream}
+                label={`${user.nickname} (canlı yayın)`}
+                role="host"
                 muted
                 isLocal
                 cameraOn={engine.mediaKind !== "off" && camOn}
                 micOn={micOn}
-                handRaised={handRaised}
                 accent={user.accent}
               />
-            </div>
-
-            {liveOthers.map((p) => (
+            ) : hostP ? (
               <VideoTile
-                key={p.id}
-                stream={engine.remoteStreams[p.userId] ?? null}
-                label={p.nickname}
-                role={p.role}
-                cameraOn={p.cameraOn || engine.mediaKind !== "off"}
-                micOn={p.micOn}
-                handRaised={p.handRaised}
-                accent="#a855f7"
-                state={engine.peerStates[p.userId]}
+                stream={engine.remoteStreams[hostP.userId] ?? null}
+                label={hostP.nickname}
+                role="host"
+                cameraOn={hostP.cameraOn}
+                micOn={hostP.micOn}
+                accent="#f5c542"
+                state={engine.peerStates[hostP.userId]}
               />
-            ))}
+            ) : (
+              <div className="flex aspect-video items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br from-ink3 to-ink text-center text-sm text-white/55">
+                {stream?.status === "live" ? "Yayıncı bağlanıyor..." : "Yayın henüz başlamadı. Başlayınca burada görünecek."}
+              </div>
+            )}
+
+            {showPip && (
+              <SelfPip
+                stream={engine.localStream}
+                label={user.nickname}
+                camOn={camOn}
+                micOn={micOn}
+                mediaOff={engine.mediaKind === "off"}
+                onToggleCam={toggleCam}
+                onToggleMic={toggleMic}
+                onStart={toggleCam}
+              />
+            )}
           </div>
 
-          {me?.status === "waiting" && (
-            <div className="mt-3 rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
-              ⏳ Konuk isteğin bekleme listesinde. Yayıncı onaylayınca kameran sahneye düşecek.
+          {/* Yayıncı: sahnedeki mod/konuk kameraları */}
+          {isHost && stageOthers.length > 0 && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {stageOthers.map((p) => (
+                <VideoTile
+                  key={p.id}
+                  stream={engine.remoteStreams[p.userId] ?? null}
+                  label={p.nickname}
+                  role={p.role}
+                  cameraOn={p.cameraOn}
+                  micOn={p.micOn}
+                  handRaised={p.handRaised}
+                  accent="#a855f7"
+                  state={engine.peerStates[p.userId]}
+                />
+              ))}
             </div>
           )}
 
-          {/* WAITING LIST */}
+          {/* Diğerleri: sahnedeki konuklar (isim listesi) */}
+          {!isHost && stageOthers.some((p) => p.role === "guest") && (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              {stageOthers
+                .filter((p) => p.role === "guest")
+                .map((p) => (
+                  <span key={p.id} className="rounded-full bg-fuchsia-500/15 px-3 py-1.5 text-fuchsia-200">
+                    🎤 {p.nickname} {p.cameraOn ? "🎥" : "🚫"}
+                  </span>
+                ))}
+            </div>
+          )}
+
+          {me?.status === "waiting" && (
+            <div className="mt-3 rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+              ⏳ Konuk isteğin bekleme listesinde. Onaylanınca sahneye alınacaksın.
+            </div>
+          )}
+
           {isStaff && waiting.length > 0 && (
             <div className="mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-400/5 p-3">
               <p className="mb-2 text-xs font-bold uppercase tracking-wider text-cyan-300">
@@ -737,13 +821,12 @@ export function LiveStudio() {
             </div>
           )}
 
-          {/* LIVE PARTICIPANT MANAGEMENT */}
           {isStaff && liveOthers.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {liveOthers.map((p) => (
                 <div key={p.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-1.5 text-xs">
                   <span className={p.role === "guest" ? "text-fuchsia-300" : "text-white/70"}>
-                    {p.role === "guest" ? "🎤" : "👤"} {p.nickname}
+                    {p.role === "guest" ? "🎤" : p.role === "moderator" ? "🛡" : "👤"} {p.nickname}
                   </span>
                   <span className="text-white/35">{engine.peerStates[p.userId] ?? "-"}</span>
                   {isHost && p.role === "guest" && (
@@ -770,66 +853,48 @@ export function LiveStudio() {
               </button>
             )
           ) : (
+            !isMod && (
+              <button
+                onClick={() => setGuestDialog(true)}
+                disabled={me?.role === "guest" || me?.status === "waiting"}
+                className="btn-gold rounded-xl px-5 py-2.5 text-sm font-bold"
+              >
+                🎤 Konuk Ol
+              </button>
+            )
+          )}
+
+          {canPublish && !showPip && (
+            <>
+              <button onClick={toggleMic} className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${micOn ? "text-white" : "text-red-300"}`}>
+                {micOn ? "🎙 Mikrofon Açık" : "🔇 Mikrofon Kapalı"}
+              </button>
+              <button onClick={toggleCam} className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${camOn ? "text-white" : "text-red-300"}`}>
+                {camOn ? "🎥 Kamera Açık" : "🚫 Kamera Kapalı"}
+              </button>
+            </>
+          )}
+
+          {(isHost || onStageGuest) && (
             <button
-              onClick={() => setGuestDialog(true)}
-              disabled={me?.role === "guest" || me?.status === "waiting"}
-              className="btn-gold rounded-xl px-5 py-2.5 text-sm font-bold"
+              onClick={() => void engine.setMedia(engine.mediaKind === "screen" ? "camera" : "screen")}
+              className="btn-ghost rounded-xl px-4 py-2.5 text-sm"
             >
-              🎤 Konuk Ol
+              {engine.mediaKind === "screen" ? "🖥 Ekranı Kapat" : "🖥 Ekran Paylaş"}
             </button>
           )}
 
-          <button
-            onClick={() => {
-              const next = !micOn;
-              if (engine.mediaKind === "off") {
-                void engine.setMedia("camera");
-                setCamOn(true);
-                setMicOn(true);
-              } else {
-                engine.toggleAudio();
-                setMicOn(next);
-              }
-            }}
-            className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${micOn ? "text-white" : "text-red-300"}`}
-          >
-            {micOn ? "🎙 Mikrofon Açık" : "🔇 Mikrofon Kapalı"}
-          </button>
-
-          <button
-            onClick={() => {
-              if (engine.mediaKind === "off") {
-                void engine.setMedia("camera");
-                setCamOn(true);
-              } else {
-                engine.toggleVideo();
-                setCamOn((c) => !c);
-              }
-            }}
-            className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${camOn ? "text-white" : "text-red-300"}`}
-          >
-            {camOn ? "🎥 Kamera Açık" : "🚫 Kamera Kapalı"}
-          </button>
-
-          <button
-            onClick={() => void engine.setMedia(engine.mediaKind === "screen" ? "camera" : "screen")}
-            className="btn-ghost rounded-xl px-4 py-2.5 text-sm"
-          >
-            {engine.mediaKind === "screen" ? "🖥 Ekranı Kapat" : "🖥 Ekran Paylaş"}
-          </button>
-
-          <button
-            onClick={() => setHandRaised((h) => !h)}
-            className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${handRaised ? "text-amber-300" : ""}`}
-          >
-            ✋ {handRaised ? "Eldayım" : "El Kaldır"}
-          </button>
+          {!isHost && (
+            <button
+              onClick={() => setHandRaised((h) => !h)}
+              className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${handRaised ? "text-amber-300" : ""}`}
+            >
+              ✋ {handRaised ? "Eldayım" : "El Kaldır"}
+            </button>
+          )}
 
           {isHost && (
             <>
-              <button onClick={copyCode} className="btn-ghost rounded-xl px-4 py-2.5 text-sm">
-                🔑 Konuk Kodu: {stream?.guestCode}
-              </button>
               <button onClick={() => void muteAll()} className="btn-ghost rounded-xl px-4 py-2.5 text-sm">
                 🔕 Herkesi Sustur
               </button>
@@ -845,26 +910,31 @@ export function LiveStudio() {
             </button>
           )}
 
-          <Link href="/panel" className="ml-auto rounded-xl bg-white/5 px-4 py-2.5 text-sm hover:bg-white/15">
-            🛡 Moderatör Paneli
-          </Link>
+          {isStaff && (
+            <Link href="/panel" className="ml-auto rounded-xl bg-white/5 px-4 py-2.5 text-sm hover:bg-white/15">
+              🛡 {isHost ? "Admin" : "Moderatör"} Paneli
+            </Link>
+          )}
         </div>
 
         {/* GUEST DIALOG */}
         {guestDialog && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
             <div className="glass neon-ring w-full max-w-sm rounded-3xl p-6">
-              <p className="font-display text-2xl text-gold">Konuk Davet Kodu</p>
+              <p className="font-display text-2xl text-gold">Konuk Ol</p>
               <p className="mt-2 text-sm text-white/60">
-                Yayıncının paylaştığı kodu gir. Onaylanınca kameran ve mikrofonun sahneye eklenir.
+                Google hesabınla ({user.email}) konuk isteği gönderirsin. Onaylanınca sahneye alınırsın.
               </p>
-              <input
-                value={guestCodeInput}
-                onChange={(e) => setGuestCodeInput(e.target.value.toUpperCase())}
-                placeholder="BERK24"
-                className="mt-4 w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-center text-lg tracking-[0.3em] outline-none focus:border-gold"
-              />
-              <div className="mt-4 flex gap-2">
+              <label className="mt-4 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={guestCamOff}
+                  onChange={(e) => setGuestCamOff(e.target.checked)}
+                  className="h-4 w-4 accent-amber-400"
+                />
+                Yüzümü göstermek istemiyorum (kameram kapalı katıl)
+              </label>
+              <div className="mt-5 flex gap-2">
                 <button onClick={() => void requestGuest()} className="btn-gold flex-1 rounded-xl py-3 font-bold">
                   İstek Gönder
                 </button>

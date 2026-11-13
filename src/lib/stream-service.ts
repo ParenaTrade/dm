@@ -24,7 +24,6 @@ export function toStreamInfo(row: typeof streams.$inferSelect): StreamInfo {
     category: row.category,
     description: row.description,
     status: row.status,
-    guestCode: row.guestCode,
     chatLocked: row.chatLocked,
     slowModeSeconds: row.slowModeSeconds,
     guestLimit: row.guestLimit,

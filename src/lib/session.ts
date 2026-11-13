@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { and, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
-import { sessions, users } from "@/db/schema";
+import { moderators, sessions, users } from "@/db/schema";
 
 export const SESSION_COOKIE = "bb_session";
 
 export type CurrentUser = {
   id: number;
+  email: string;
+  avatarUrl: string | null;
   nickname: string;
   role: string;
   accent: string;
@@ -33,24 +35,65 @@ export function normalizeNickname(raw: string) {
   return raw.trim().replace(/\s+/g, " ").slice(0, 20);
 }
 
-export async function upsertUser(nickname: string): Promise<DbUser> {
-  const clean = normalizeNickname(nickname);
-  const lower = clean.toLocaleLowerCase("tr");
-  const accent = ACCENTS[Math.abs(hashCode(lower)) % ACCENTS.length];
+export function adminEmails(): string[] {
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(/[,;\s]+/)
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
 
-  const existing = await db.select().from(users).where(eq(users.nicknameLower, lower)).limit(1);
+/** Google hesabıyla gelen kullanıcıyı oluşturur/günceller; rolü e-postadan türetir. */
+export async function upsertGoogleUser(profile: {
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+}): Promise<DbUser> {
+  const email = profile.email.trim().toLowerCase();
+  const fallback = email.split("@")[0];
+  const nickname = normalizeNickname(profile.name) || normalizeNickname(fallback) || "Konuk";
+  const lower = nickname.toLocaleLowerCase("tr");
+  const accent = ACCENTS[Math.abs(hashCode(email)) % ACCENTS.length];
+
+  let role = "viewer";
+  if (adminEmails().includes(email)) {
+    role = "host";
+  } else {
+    const mod = await db
+      .select({ id: moderators.id })
+      .from(moderators)
+      .where(eq(moderators.email, email))
+      .limit(1);
+    if (mod[0]) role = "moderator";
+  }
+
+  const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (existing[0]) {
-    const banned = existing[0].bannedUntil && existing[0].bannedUntil.getTime() > Date.now();
-    await db
+    const updated = await db
       .update(users)
-      .set({ lastSeenAt: new Date(), accent: banned ? existing[0].accent : accent })
-      .where(eq(users.id, existing[0].id));
-    return existing[0];
+      .set({
+        nickname,
+        nicknameLower: lower,
+        avatarUrl: profile.avatarUrl,
+        role,
+        isVip: role === "host" ? true : existing[0].isVip,
+        lastSeenAt: new Date(),
+      })
+      .where(eq(users.id, existing[0].id))
+      .returning();
+    return updated[0];
   }
 
   const inserted = await db
     .insert(users)
-    .values({ nickname: clean, nicknameLower: lower, accent })
+    .values({
+      nickname,
+      nicknameLower: lower,
+      email,
+      avatarUrl: profile.avatarUrl,
+      role,
+      accent,
+      isVip: role === "host",
+    })
     .returning();
   return inserted[0];
 }
@@ -71,6 +114,7 @@ export async function createSession(userId: number) {
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 60 * 60 * 24 * 30,
   });
@@ -101,6 +145,8 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 export function toCurrentUser(user: DbUser): CurrentUser {
   return {
     id: user.id,
+    email: user.email ?? "",
+    avatarUrl: user.avatarUrl ?? null,
     nickname: user.nickname,
     role: user.role,
     accent: user.accent,
@@ -110,9 +156,8 @@ export function toCurrentUser(user: DbUser): CurrentUser {
   };
 }
 
-export async function findUserByNickname(nickname: string) {
-  const lower = normalizeNickname(nickname).toLocaleLowerCase("tr");
-  const rows = await db.select().from(users).where(eq(users.nicknameLower, lower)).limit(1);
+export async function findUserByEmail(email: string) {
+  const rows = await db.select().from(users).where(eq(users.email, email.trim().toLowerCase())).limit(1);
   return rows[0] ?? null;
 }
 

@@ -39,7 +39,9 @@ export function VideoTile({
     if (stream) void el.play().catch(() => undefined);
   }, [stream]);
 
-  const hasVideo = Boolean(stream && stream.getVideoTracks().some((t) => t.readyState === "live" && t.enabled));
+  const hasVideo = Boolean(
+    cameraOn && stream && stream.getVideoTracks().some((t) => t.readyState === "live" && t.enabled),
+  );
 
   return (
     <div
@@ -67,7 +69,7 @@ export function VideoTile({
             {label.slice(0, 1).toUpperCase()}
           </div>
           <p className="text-xs text-white/50">
-            {isLocal ? "Kamera kapalı" : state === "connected" ? "Görüntü bekleniyor" : "Bağlanıyor..."}
+            {!cameraOn ? "Kamera kapalı" : state === "connected" ? "Görüntü bekleniyor" : "Bağlanıyor..."}
           </p>
         </div>
       )}

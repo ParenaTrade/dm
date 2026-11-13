@@ -39,7 +39,7 @@ SUPABASE_DB_URL=postgresql://postgres.<ref>:<ŞİFRE>@aws-0-<bölge>.pooler.supa
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 SUPABASE_SERVICE_ROLE_KEY=<service role>   # opsiyonel
-HOST_PASSWORD=berkbey                      # prodüksiyonda değiştir
+ADMIN_EMAILS=berk@gmail.com,diger@gmail.com   # admin (yayıncı) Google hesapları
 ```
 
 - `SUPABASE_DB_URL`: Database → Connection string → **URI**, Transaction pooler (6543)
@@ -67,17 +67,33 @@ Build komutları değişmez: `next build`. Tüm API route'ları `runtime = "node
 websocket'i üzerinden **anlık** gidiyor demektir; `↻ POOLING` görünüyorsa anahtarlar
 yok ve sistem yedek modda çalışıyor (yine canlı, ~1.5 sn gecikme).
 
-## 5. Kullanım
+## 5. Google ile giriş (zorunlu)
 
-| Adım | Ne yapmalı |
+Giriş yalnızca Google hesabı ile yapılır (yayıncı, moderatör, konuk, izleyici). Kod/şifre girişi kaldırıldı.
+
+1. Google Cloud Console → APIs & Services → Credentials → **OAuth client ID (Web)** oluştur.
+   Authorized redirect URI: `https://<ref>.supabase.co/auth/v1/callback`
+2. Supabase → Authentication → Providers → **Google** → Client ID/Secret gir, aç.
+3. Supabase → Authentication → URL Configuration → Site URL ve Redirect URLs'e
+   `https://<alan-adın>/canli` ve `https://<alan-adın>/panel` ekle (yerelde `http://localhost:3000/**`).
+4. Vercel'de `ADMIN_EMAILS` tanımla. Bu e-postalarla giren kişi **admin (yayıncı)** olur.
+
+| Rol | Nasıl olunur |
 | --- | --- |
-| Yayıncı ol | `/canli` → takma ad yaz → "Yayıncı olarak giriş yap" → şifre `berkbey` (veya `HOST_PASSWORD`) |
-| Yayın | `▶ Yayını Başlat` → kamera/mikrofon izin ver |
-| Konuk ol | `/canli` → `🎤 Konuk Ol` → kod `BERK24` → yayıncı onaylar |
-| Moderatör | Yayıncı ayarlar panelinden takma ad yazıp `🛡 Mod Yap` → `/panel` |
-| Durum | `/durum` |
+| Admin / Yayıncı | E-postası `ADMIN_EMAILS` içinde |
+| Moderatör | Admin, panelden Google e-postasını ekler; o hesapla girince otomatik moderatör olur |
+| Konuk | Herhangi bir Google hesabı → `🎤 Konuk Ol` → admin/moderatör onaylar (kamera kapalı katılma seçeneği var) |
+| İzleyici | Diğer tüm Google hesapları |
 
-## 6. Notlar
+## 6. Ekran davranışı
+
+- Ana sahne ekranı canlı yayın görüntüsünü (yayıncı kamerası) gösterir.
+- Moderatör girişinde kamera otomatik açılır (mikrofon kapalı); görüntü sahne ekranının **sol üstünde küçük kare** olarak görünür.
+- Konuk sahneye alınınca aynı kare açılır; yüzünü göstermek istemeyen konuk kamerasını kapalı tutabilir.
+- Sistem durumu ayrıntıları yalnızca admin/moderatör panelinde (**Sistem Durumu** sekmesi) görünür.
+  İzleyiciler yalnızca **Aktif (yeşil)** / **Pasif (kırmızı)** düğmesini görür.
+
+## 7. Notlar
 
 - WebRTC peer-to-peer'dır; iki tarayıcı farklı ağlardaysa TURN gerekir. Aynı ağda
   ya da NAT'a izin veren ağlarda STUN (Google) yeterlidir. TURN eklemek için

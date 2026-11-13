@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { activityLog, chatMessages, users } from "@/db/schema";
+import { activityLog, chatMessages, moderators, users } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,7 @@ export async function GET() {
     .select({
       id: users.id,
       nickname: users.nickname,
+      email: users.email,
       role: users.role,
       mutedUntil: users.mutedUntil,
       bannedUntil: users.bannedUntil,
@@ -44,6 +45,7 @@ export async function GET() {
     users: banned.map((row) => ({
       id: row.id,
       nickname: row.nickname,
+      email: row.email ?? "",
       role: row.role,
       mutedUntil: row.mutedUntil ? row.mutedUntil.toISOString() : null,
       bannedUntil: row.bannedUntil ? row.bannedUntil.toISOString() : null,
@@ -65,12 +67,25 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "Yetki yok" }, { status: 403 });
   }
   const payload: { action?: string; userId?: number } = await request.json().catch(() => ({}));
-  if (payload.action === "promote") {
-    await db.update(users).set({ role: "moderator" }).where(eq(users.id, Number(payload.userId)));
-    return Response.json({ ok: true });
-  }
-  if (payload.action === "demote") {
-    await db.update(users).set({ role: "viewer" }).where(eq(users.id, Number(payload.userId)));
+  if (payload.action === "promote" || payload.action === "demote") {
+    const rows = await db.select().from(users).where(eq(users.id, Number(payload.userId))).limit(1);
+    const target = rows[0];
+    if (!target?.email) {
+      return Response.json({ ok: false, error: "Yalnızca Google hesabı olan kullanıcılar yetkilendirilebilir." }, { status: 400 });
+    }
+    if (target.role === "host") {
+      return Response.json({ ok: false, error: "Admin rolü değiştirilemez." }, { status: 400 });
+    }
+    if (payload.action === "promote") {
+      await db
+        .insert(moderators)
+        .values({ email: target.email, nickname: target.nickname, nicknameLower: target.email, addedBy: user.nickname })
+        .onConflictDoNothing();
+      await db.update(users).set({ role: "moderator" }).where(eq(users.id, target.id));
+    } else {
+      await db.delete(moderators).where(eq(moderators.email, target.email));
+      await db.update(users).set({ role: "viewer" }).where(eq(users.id, target.id));
+    }
     return Response.json({ ok: true });
   }
   if (payload.action === "purgeLogs") {

@@ -56,14 +56,14 @@ const ENV_ROWS: { key: string; label: string; where: string; hint: string }[] = 
     hint: "Sadece sunucu. Saklama işleri / admin işlemleri için.",
   },
   {
-    key: "HOST_PASSWORD",
-    label: "Yayıncı panel şifresi",
-    where: "Sen belirle (varsayılan: berkbey)",
-    hint: "Canlıya çıkmadan önce mutlaka değiştir.",
+    key: "ADMIN_EMAILS",
+    label: "Admin (yayıncı) Google hesapları",
+    where: "Virgülle ayır: berk@gmail.com,diger@gmail.com",
+    hint: "Bu e-postalarla Google girişi yapan kişi admin olur. Moderatörleri panelden e-posta ile ekle.",
   },
 ];
 
-export function DeployStatus() {
+export function DeployStatus({ embedded }: { embedded?: boolean } = {}) {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,23 +94,23 @@ export function DeployStatus() {
   const realtimeReady = info?.realtime.configured && info?.realtime.rest;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-display gold-text text-4xl">Canlı Sistem Durumu</p>
-          <p className="text-sm text-white/55">
-            Supabase tabloları, Realtime köprüsü ve Vercel deployment kontrolü
-          </p>
+    <div className={embedded ? "" : "mx-auto max-w-6xl px-4 py-10 sm:px-6"}>
+      {!embedded && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-display gold-text text-4xl">Canlı Sistem Durumu</p>
+            <p className="text-sm text-white/55">Yalnızca admin ve moderatörlere görünür</p>
+          </div>
+          <div className="flex gap-2">
+            <Link href="/panel" className="btn-gold rounded-full px-5 py-2.5 text-sm font-bold">
+              🛡 Panel
+            </Link>
+            <Link href="/canli" className="btn-ghost rounded-full px-5 py-2.5 text-sm">
+              Stüdyo
+            </Link>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Link href="/canli" className="btn-gold rounded-full px-5 py-2.5 text-sm font-bold">
-            ▶ Stüdyoya Git
-          </Link>
-          <Link href="/" className="btn-ghost rounded-full px-5 py-2.5 text-sm">
-            Ana Sayfa
-          </Link>
-        </div>
-      </div>
+      )}
 
       <div className="mt-6 grid gap-4 md:grid-cols-3">
         <div className={`rounded-3xl p-5 border ${ok ? "border-emerald-400/40 bg-emerald-500/10" : "border-red-400/40 bg-red-500/10"}`}>

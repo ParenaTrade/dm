@@ -1,7 +1,5 @@
 import { ensureDatabase } from "@/lib/bootstrap";
 
-export const DEMO_HOST_PASSWORD = process.env.HOST_PASSWORD ?? "berkbey";
-
 let logged = false;
 
 /**

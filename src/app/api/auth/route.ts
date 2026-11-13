@@ -1,56 +1,50 @@
+import { createClient } from "@supabase/supabase-js";
 import { ensureSeed } from "@/lib/seed";
-import { createSession, destroySession, getCurrentUser, upsertUser } from "@/lib/session";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/lib/supabase-server";
+import { createSession, destroySession, getCurrentUser, toCurrentUser, upsertGoogleUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** Google (Supabase Auth) erişim jetonunu doğrular ve oturum çerezi açar. */
 export async function POST(request: Request) {
   await ensureSeed();
-  let payload: { nickname?: string; hostPassword?: string } = {};
-  try {
-    payload = await request.json();
-  } catch {
-    payload = {};
-  }
-
-  const nickname = (payload.nickname ?? "").trim();
-  if (nickname.length < 2) {
-    return Response.json({ ok: false, error: "Takma ad en az 2 karakter olmalı." }, { status: 400 });
-  }
-
-  const user = await upsertUser(nickname);
-
-  if (user.bannedUntil && user.bannedUntil.getTime() > Date.now()) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return Response.json(
-      { ok: false, error: "Hesabınız yayından uzaklaştırılmış. Lütfen daha sonra tekrar deneyin." },
-      { status: 403 },
+      { ok: false, error: "Google girişi yapılandırılmamış (Supabase URL / anon key eksik)." },
+      { status: 503 },
     );
   }
 
-  const hostPassword = (payload.hostPassword ?? "").trim();
-  const expected = process.env.HOST_PASSWORD ?? "berkbey";
-  if (hostPassword && hostPassword === expected) {
-    const { db } = await import("@/db");
-    const { users } = await import("@/db/schema");
-    const { eq } = await import("drizzle-orm");
-    await db.update(users).set({ role: "host", isVip: true }).where(eq(users.id, user.id));
-    user.role = "host";
-    user.isVip = true;
+  const payload: { accessToken?: string } = await request.json().catch(() => ({}));
+  const token = (payload.accessToken ?? "").trim();
+  if (!token) return Response.json({ ok: false, error: "Google oturumu bulunamadı." }, { status: 400 });
+
+  const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await client.auth.getUser(token);
+  const gUser = data?.user;
+  if (error || !gUser?.email) {
+    return Response.json({ ok: false, error: "Google oturumu doğrulanamadı." }, { status: 401 });
+  }
+  const isGoogle =
+    gUser.app_metadata?.provider === "google" || (gUser.identities ?? []).some((i) => i.provider === "google");
+  if (!isGoogle) {
+    return Response.json({ ok: false, error: "Yalnızca Google hesabı ile giriş yapılabilir." }, { status: 403 });
+  }
+
+  const meta = (gUser.user_metadata ?? {}) as Record<string, unknown>;
+  const name = String(meta.full_name ?? meta.name ?? "");
+  const avatar = String(meta.avatar_url ?? meta.picture ?? "") || null;
+
+  const user = await upsertGoogleUser({ email: gUser.email, name, avatarUrl: avatar });
+  if (user.bannedUntil && user.bannedUntil.getTime() > Date.now()) {
+    return Response.json({ ok: false, error: "Hesabınız yayından uzaklaştırılmış." }, { status: 403 });
   }
 
   await createSession(user.id);
-  return Response.json({
-    ok: true,
-    user: {
-      id: user.id,
-      nickname: user.nickname,
-      role: user.role,
-      accent: user.accent,
-      isVip: user.isVip,
-      mutedUntil: user.mutedUntil ? user.mutedUntil.toISOString() : null,
-      bannedUntil: user.bannedUntil ? user.bannedUntil.toISOString() : null,
-    },
-  });
+  return Response.json({ ok: true, user: toCurrentUser(user) });
 }
 
 export async function DELETE() {
@@ -60,5 +54,5 @@ export async function DELETE() {
 
 export async function GET() {
   const user = await getCurrentUser();
-  return Response.json({ ok: true, user });
+  return Response.json({ ok: true, user, configured: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY) });
 }

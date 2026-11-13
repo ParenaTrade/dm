@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { db, getDbInfo } from "@/db";
 import { tryEnsureDatabase } from "@/lib/bootstrap";
 import { checkSupabaseRest, getSupabaseStatus } from "@/lib/supabase-server";
+import { getCurrentUser, isStaff } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +21,8 @@ const TABLES = [
 ] as const;
 
 export async function GET() {
+  const me = await getCurrentUser();
+  const staff = isStaff(me);
   const info = getDbInfo();
   const boot = await tryEnsureDatabase();
 
@@ -40,11 +43,17 @@ export async function GET() {
     dbError = error instanceof Error ? error.message : String(error);
   }
 
+  if (!staff) {
+    // Yetkisiz kullanıcılar yalnızca Aktif / Pasif bilgisini görür.
+    return Response.json({ ok: true, active: dbOk && boot.ok });
+  }
+
   const supabase = getSupabaseStatus();
   const rest = supabase.url ? await checkSupabaseRest() : { ok: false, error: "URL tanımlı değil" };
 
   return Response.json({
     ok: dbOk,
+    active: dbOk && boot.ok,
     db: { ...info, connected: dbOk, error: dbError, bootstrapped: boot.ok, bootError: boot.error },
     tables: rows,
     realtime: {

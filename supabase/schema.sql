@@ -9,6 +9,8 @@ create table if not exists public.users (
   id serial primary key,
   nickname text not null,
   nickname_lower text not null,
+  email text,
+  avatar_url text,
   role text not null default 'viewer',           -- host | moderator | guest | viewer
   accent text not null default '#a855f7',
   is_vip boolean not null default false,
@@ -18,7 +20,11 @@ create table if not exists public.users (
   created_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now()
 );
-create unique index if not exists users_nickname_lower_idx on public.users (nickname_lower);
+alter table public.users add column if not exists email text;
+alter table public.users add column if not exists avatar_url text;
+drop index if exists public.users_nickname_lower_idx;
+create index if not exists users_nickname_idx on public.users (nickname_lower);
+create unique index if not exists users_email_idx on public.users (email);
 
 create table if not exists public.sessions (
   id serial primary key,
@@ -90,6 +96,7 @@ create index if not exists chat_stream_idx on public.chat_messages (stream_id, i
 create table if not exists public.moderators (
   id serial primary key,
   nickname_lower text not null,
+  email text,
   nickname text not null,
   added_by text not null default 'Berkbey',
   can_delete boolean not null default true,
@@ -97,7 +104,11 @@ create table if not exists public.moderators (
   note text not null default '',
   created_at timestamptz not null default now()
 );
-create unique index if not exists moderators_nickname_idx on public.moderators (nickname_lower);
+alter table public.moderators add column if not exists email text;
+drop index if exists public.moderators_nickname_idx;
+create unique index if not exists moderators_email_idx on public.moderators (email);
+delete from public.moderators where email is null;
+update public.users set role = 'viewer' where email is null and role in ('host', 'moderator');
 
 create table if not exists public.schedule_items (
   id serial primary key,
@@ -131,25 +142,9 @@ create index if not exists activity_log_created_idx on public.activity_log (crea
 -- ============================================================
 -- Seed (yayıncı, moderatörler, yayın, program, çekilişler)
 -- ============================================================
-insert into public.users (nickname, nickname_lower, role, accent, is_vip)
-values ('Berkbey', 'berkbey', 'host', '#f5c542', true)
-on conflict (nickname_lower) do nothing;
-
-insert into public.moderators (nickname, nickname_lower, added_by, note)
-values ('AyseMod', 'aysemod', 'Berkbey', 'Sohbet moderatörü'),
-       ('KralModer', 'kralmoder', 'Berkbey', 'Gece vardiyası'),
-       ('NeoBerk', 'neoberk', 'Berkbey', 'Konuk onaylama')
-on conflict (nickname_lower) do nothing;
-
-insert into public.users (nickname, nickname_lower, role, accent)
-values ('AyseMod', 'aysemod', 'moderator', '#22d3ee'),
-       ('KralModer', 'kralmoder', 'moderator', '#22d3ee'),
-       ('NeoBerk', 'neoberk', 'moderator', '#22d3ee')
-on conflict (nickname_lower) do nothing;
-
 insert into public.streams (title, category, description, guest_code, host_nickname)
-select 'Berkbey ile Canlı Sohbet & Casino Keyfi', 'Sohbet',
-       'Birlikte daha eğlenceli! Yayına katıl, sohbete yaz, konuk ol ve çekilişlere sende katıl.',
+select 'Berkbey Canlı Yayın — Spor, Oyun, Eğlence & Sohbet', 'Sohbet',
+       'Birlikte daha eğlenceli! Maç yorumu, oyun, eğlence ve sohbet için yayına katıl.',
        'BERK24', 'Berkbey'
 where not exists (select 1 from public.streams);
 

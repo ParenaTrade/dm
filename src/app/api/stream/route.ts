@@ -2,7 +2,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { participants, rtcSignals, streams } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
-import { getCurrentUser } from "@/lib/session";
+import { activeBanCheck, getCurrentUser } from "@/lib/session";
 import {
   getActiveStream,
   sweepStream,
@@ -71,12 +71,26 @@ export async function POST(request: Request) {
 
   switch (body.action) {
     case "join": {
-      const wantGuest = body.as === "guest";
+      const wantGuest = body.as === "guest" && !isStaff;
+      const banned = await activeBanCheck(user.id);
+      if (banned) {
+        return Response.json({ ok: false, error: "Yayından uzaklaştırıldın." }, { status: 403 });
+      }
+      if (
+        mine &&
+        !wantGuest &&
+        body.as !== "demote" &&
+        mine.role === "guest" &&
+        (mine.status === "live" || mine.status === "waiting")
+      ) {
+        const kept = await db
+          .update(participants)
+          .set({ updatedAt: new Date() })
+          .where(eq(participants.id, mine.id))
+          .returning();
+        return Response.json({ ok: true, participant: toParticipantInfo(kept[0]) });
+      }
       if (wantGuest) {
-        const code = (body.code ?? "").trim().toUpperCase();
-        if (code !== stream.guestCode.toUpperCase()) {
-          return Response.json({ ok: false, error: "Konuk kodu hatalı." }, { status: 403 });
-        }
         const liveGuests = await db
           .select({ count: sql<number>`count(*)::int` })
           .from(participants)
@@ -127,7 +141,7 @@ export async function POST(request: Request) {
           handRaised: typeof patch.handRaised === "boolean" ? patch.handRaised : mine.handRaised,
           isScreenSharing:
             typeof patch.isScreenSharing === "boolean" ? patch.isScreenSharing : mine.isScreenSharing,
-          status: mine.status === "removed" ? mine.status : "live",
+          status: mine.status === "removed" || mine.status === "waiting" ? mine.status : "live",
           updatedAt: new Date(),
         })
         .where(eq(participants.id, mine.id))
@@ -190,10 +204,6 @@ export async function POST(request: Request) {
             typeof s.title === "string" && s.title.trim() ? s.title.trim().slice(0, 120) : stream.title,
           category: typeof s.category === "string" ? s.category : stream.category,
           description: typeof s.description === "string" ? s.description.slice(0, 400) : stream.description,
-          guestCode:
-            typeof s.guestCode === "string" && s.guestCode.trim()
-              ? s.guestCode.trim().toUpperCase().slice(0, 12)
-              : stream.guestCode,
           chatLocked: typeof s.chatLocked === "boolean" ? s.chatLocked : stream.chatLocked,
           slowModeSeconds:
             typeof s.slowModeSeconds === "number"

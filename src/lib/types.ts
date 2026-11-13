@@ -4,7 +4,6 @@ export type StreamInfo = {
   category: string;
   description: string;
   status: string;
-  guestCode: string;
   chatLocked: boolean;
   slowModeSeconds: number;
   guestLimit: number;
@@ -39,6 +38,7 @@ export type ChatMessageInfo = {
 
 export type ModeratorInfo = {
   id: number;
+  email: string;
   nickname: string;
   addedBy: string;
   canDelete: boolean;
@@ -94,3 +94,13 @@ export function timeAgo(iso: string) {
   if (hours < 24) return `${hours} sa`;
   return `${Math.floor(hours / 24)} g`;
 }
+
+export type AppUser = {
+  id: number;
+  email: string;
+  nickname: string;
+  role: string;
+  accent: string;
+  isVip: boolean;
+  avatarUrl: string | null;
+};

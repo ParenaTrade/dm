@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ROLE_LABELS, roleBadgeClass, type ChatMessageInfo, type ModeratorInfo } from "@/lib/types";
+import { DeployStatus } from "@/components/DeployStatus";
+import { exchangeGoogleSession, googleAuthConfigured, signInWithGoogle } from "@/lib/auth-client";
+import { ROLE_LABELS, roleBadgeClass, type AppUser, type ChatMessageInfo, type ModeratorInfo } from "@/lib/types";
 
 type PanelUser = {
   id: number;
+  email: string;
   nickname: string;
   role: string;
   mutedUntil: string | null;
@@ -15,13 +18,13 @@ type PanelUser = {
 
 type LogEntry = { id: number; actor: string; action: string; target: string; createdAt: string };
 
-type Tab = "mods" | "users" | "deleted" | "logs";
+type Tab = "mods" | "users" | "deleted" | "logs" | "system";
 
 export function PanelClient() {
   const [loading, setLoading] = useState(true);
   const [allowed, setAllowed] = useState(false);
-  const [nickname, setNickname] = useState("");
-  const [hostPassword, setHostPassword] = useState("");
+  const [me, setMe] = useState<AppUser | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("mods");
@@ -34,11 +37,18 @@ export function PanelClient() {
   const [search, setSearch] = useState("");
 
   const loadAll = useCallback(async () => {
+    const meRes = await fetch("/api/auth", { cache: "no-store" }).then((r) => r.json()).catch(() => null);
+    if (meRes?.user) setMe(meRes.user as AppUser);
+    else {
+      const ex = await exchangeGoogleSession();
+      if (ex?.user) setMe(ex.user);
+      else if (ex?.error) setError(ex.error);
+    }
     const [modsRes, panelRes] = await Promise.all([
       fetch("/api/moderators", { cache: "no-store" }),
       fetch("/api/panel", { cache: "no-store" }),
     ]);
-    if (panelRes.status === 403) {
+    if (panelRes.status === 403 || panelRes.status === 401) {
       setAllowed(false);
       setLoading(false);
       return;
@@ -69,29 +79,23 @@ export function PanelClient() {
 
   const login = async () => {
     setError(null);
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nickname, hostPassword }),
-    });
-    const data = await res.json();
-    if (!data.ok) {
-      setError(data.error ?? "Giriş başarısız");
-      return;
+    setBusy(true);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : "Google girişi başlatılamadı");
     }
-    if (data.user.role !== "host" && data.user.role !== "moderator") {
-      setError("Bu panele girmek için yayıncı veya moderatör olmalısın. (Demo yayıncı şifresi: berkbey)");
-      return;
-    }
-    await loadAll();
   };
+
+  const isHost = me?.role === "host";
 
   const addModerator = async () => {
     if (!modInput.trim()) return;
     const res = await fetch("/api/moderators", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nickname: modInput.trim(), note: "Panelden eklendi" }),
+      body: JSON.stringify({ email: modInput.trim(), note: "Panelden eklendi" }),
     });
     const data = await res.json();
     setNotice(data.ok ? `${modInput.trim()} moderatör oldu. 🛡` : data.error ?? "Eklenemedi");
@@ -128,29 +132,26 @@ export function PanelClient() {
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
         <div className="glass neon-ring w-full max-w-md rounded-3xl p-7">
-          <p className="font-display gold-text text-3xl">Moderatör Paneli</p>
+          <p className="font-display gold-text text-3xl">Admin / Moderatör Paneli</p>
           <p className="mt-2 text-sm text-white/60">
-            Yayıncı şifresi ile giriş yap (demo: <span className="text-gold">berkbey</span>) ya da moderatör hesabınla
-            devam et.
+            Bu panele yalnızca yetkili Google hesapları girebilir.
           </p>
           <div className="mt-5 space-y-3">
-            <input
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
-              placeholder="Takma ad"
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-gold/50"
-            />
-            <input
-              value={hostPassword}
-              onChange={(e) => setHostPassword(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void login()}
-              type="password"
-              placeholder="Yayıncı şifresi"
-              className="w-full rounded-xl border border-gold/30 bg-black/40 px-4 py-3 outline-none focus:border-gold"
-            />
             {error && <p className="text-sm text-red-300">{error}</p>}
-            <button onClick={() => void login()} className="btn-gold w-full rounded-xl py-3 font-bold">
-              Giriş Yap
+            {me && (
+              <p className="text-sm text-amber-300">
+                {me.email} hesabının bu panele yetkisi yok. Yetkili bir Google hesabıyla tekrar giriş yap.
+              </p>
+            )}
+            {!googleAuthConfigured && (
+              <p className="text-sm text-amber-300">Google girişi yapılandırılmamış (Supabase anahtarları eksik).</p>
+            )}
+            <button
+              onClick={() => void login()}
+              disabled={busy || !googleAuthConfigured}
+              className="btn-gold w-full rounded-xl py-3 font-bold disabled:opacity-60"
+            >
+              {busy ? "Yönlendiriliyor…" : "Google ile Giriş Yap"}
             </button>
             <Link href="/canli" className="block text-center text-xs text-white/45 hover:text-gold">
               ← Stüdyoya dön
@@ -167,15 +168,12 @@ export function PanelClient() {
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="font-display gold-text text-4xl">Moderatör Paneli</p>
+          <p className="font-display gold-text text-4xl">{isHost ? "Admin Paneli" : "Moderatör Paneli"}</p>
           <p className="text-sm text-white/55">Kadro yönetimi, kullanıcı denetimi ve olay kaydı</p>
         </div>
         <div className="flex gap-2">
           <Link href="/canli" className="btn-gold rounded-full px-5 py-2.5 text-sm font-bold">
             ▶ Stüdyoya Git
-          </Link>
-          <Link href="/durum" className="btn-ghost rounded-full px-5 py-2.5 text-sm">
-            Sistem Durumu
           </Link>
           <Link href="/" className="btn-ghost rounded-full px-5 py-2.5 text-sm">
             Ana Sayfa
@@ -194,6 +192,7 @@ export function PanelClient() {
             ["users", `👥 Kullanıcılar (${users.length})`],
             ["deleted", `🗑 Silinen Mesajlar (${deleted.length})`],
             ["logs", `📜 Olaylar (${logs.length})`],
+            ["system", "🖥 Sistem Durumu"],
           ] as [Tab, string][]
         ).map(([key, label]) => (
           <button
@@ -211,17 +210,19 @@ export function PanelClient() {
       <div className="mt-5">
         {tab === "mods" && (
           <div className="space-y-4">
+            {isHost && (
             <div className="glass-dark flex flex-wrap gap-2 rounded-2xl p-4">
               <input
                 value={modInput}
                 onChange={(e) => setModInput(e.target.value)}
-                placeholder="Moderatör ekle: takma ad yaz (örn. AyseMod)"
+                placeholder="Moderatör ekle: Google e-postası (örn. ayse@gmail.com)"
                 className="min-w-[220px] flex-1 rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-cyan-400/50"
               />
               <button onClick={() => void addModerator()} className="btn-gold rounded-xl px-5 py-3 text-sm font-bold">
                 🛡 Moderatör Ekle
               </button>
             </div>
+            )}
 
             <div className="grid gap-3 md:grid-cols-2">
               {mods.map((m) => (
@@ -231,17 +232,18 @@ export function PanelClient() {
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/20 text-lg">🛡</span>
                       <div>
                         <p className="font-bold">{m.nickname}</p>
+                        <p className="text-xs text-cyan-200/70">{m.email}</p>
                         <p className="text-xs text-white/45">
                           Ekleyen: {m.addedBy} · {new Date(m.createdAt).toLocaleDateString("tr-TR")}
                         </p>
                       </div>
                     </div>
-                    <button
+                    {isHost && <button
                       onClick={() => void removeModerator(m.id)}
                       className="rounded-lg bg-red-500/20 px-3 py-1.5 text-xs text-red-200 hover:bg-red-500/40"
                     >
                       Kadrodan çıkar
-                    </button>
+                    </button>}
                   </div>
                   <p className="mt-3 text-xs text-white/50">{m.note || "Not eklenmedi"}</p>
                 </div>
@@ -270,17 +272,20 @@ export function PanelClient() {
                         {ROLE_LABELS[u.role] ?? u.role}
                       </span>
                       <span className="font-semibold">{u.nickname}</span>
+                      <span className="text-xs text-white/40">{u.email}</span>
                       <span className="text-xs text-white/40">{u.messageCount} mesaj</span>
                       {muted && <span className="rounded-md bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-300">SUSTURULMUŞ</span>}
                       {banned && <span className="rounded-md bg-red-500/20 px-2 py-0.5 text-[10px] text-red-300">UZAKLAŞTIRILMIŞ</span>}
                     </div>
                     <div className="flex gap-2">
+                      {isHost && (<>
                       <button onClick={() => void setUserAction("promote", u.id)} className="rounded-lg bg-cyan-500/20 px-3 py-1.5 text-xs hover:bg-cyan-500/40">
                         Mod yap
                       </button>
                       <button onClick={() => void setUserAction("demote", u.id)} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs hover:bg-white/20">
                         İzleyiciye düşür
                       </button>
+                      </>)}
                       <button onClick={() => void setUserAction("unban", u.id)} className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs hover:bg-emerald-500/40">
                         Yasağı kaldır
                       </button>
@@ -304,6 +309,8 @@ export function PanelClient() {
             {deleted.length === 0 && <p className="text-sm text-white/50">Silinen mesaj yok. Sohbet tertemiz. ✨</p>}
           </div>
         )}
+
+        {tab === "system" && <DeployStatus embedded />}
 
         {tab === "logs" && (
           <div className="glass-dark space-y-2 rounded-2xl p-4">

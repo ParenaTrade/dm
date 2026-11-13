@@ -308,7 +308,7 @@ export function useLiveEngine(params: {
   }, [processSignal]);
 
   const setMedia = useCallback(
-    async (kind: "off" | "camera" | "screen") => {
+    async (kind: "off" | "camera" | "screen", opts?: { muted?: boolean; videoOff?: boolean }) => {
       setError(null);
       try {
         if (kind === "off") {
@@ -327,6 +327,11 @@ export function useLiveEngine(params: {
                 video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
               });
+
+        if (kind === "camera") {
+          if (opts?.muted) stream.getAudioTracks().forEach((t) => (t.enabled = false));
+          if (opts?.videoOff) stream.getVideoTracks().forEach((t) => (t.enabled = false));
+        }
 
         if (kind === "screen") {
           stream.getVideoTracks()[0]?.addEventListener("ended", () => {

@@ -16,7 +16,9 @@ export const users = pgTable(
     id: serial("id").primaryKey(),
     nickname: text("nickname").notNull(),
     nicknameLower: text("nickname_lower").notNull(),
-    role: text("role").notNull().default("viewer"), // host | moderator | guest | viewer
+    email: text("email"),
+    avatarUrl: text("avatar_url"),
+    role: text("role").notNull().default("viewer"), // host | moderator | viewer (guest = sahne koltuğu, katılımcı tablosunda)
     accent: text("accent").notNull().default("#a855f7"),
     isVip: boolean("is_vip").notNull().default(false),
     mutedUntil: timestamp("muted_until", { withTimezone: true }),
@@ -25,7 +27,10 @@ export const users = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("users_nickname_lower_idx").on(table.nicknameLower)],
+  (table) => [
+    uniqueIndex("users_email_idx").on(table.email),
+    index("users_nickname_idx").on(table.nicknameLower),
+  ],
 );
 
 /** Taraf bazlı oturumlar (cookie token) */
@@ -119,6 +124,7 @@ export const moderators = pgTable(
   {
     id: serial("id").primaryKey(),
     nicknameLower: text("nickname_lower").notNull(),
+    email: text("email"),
     nickname: text("nickname").notNull(),
     addedBy: text("added_by").notNull().default("Berkbey"),
     canDelete: boolean("can_delete").notNull().default(true),
@@ -126,7 +132,7 @@ export const moderators = pgTable(
     note: text("note").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("moderators_nickname_idx").on(table.nicknameLower)],
+  (table) => [uniqueIndex("moderators_email_idx").on(table.email)],
 );
 
 /** Yayın programı */
