@@ -57,9 +57,9 @@ const ENV_ROWS: { key: string; label: string; where: string; hint: string }[] = 
   },
   {
     key: "ADMIN_EMAILS",
-    label: "Admin (yayıncı) Google hesapları",
+    label: "Admin (yayıncı) e-posta adresleri",
     where: "Virgülle ayır: berk@gmail.com,diger@gmail.com",
-    hint: "Bu e-postalarla Google girişi yapan kişi admin olur. Moderatörleri panelden e-posta ile ekle.",
+    hint: "Bu e-postalarla kayıt olup onaylayan kişi admin olur. Moderatörleri panelden e-posta ile ekle.",
   },
 ];
 

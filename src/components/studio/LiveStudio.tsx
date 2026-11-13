@@ -6,7 +6,8 @@ import { ChatPanel } from "./ChatPanel";
 import { VideoTile } from "./VideoTile";
 import { SelfPip } from "./SelfPip";
 import { SystemStatusButton } from "../SystemStatusButton";
-import { exchangeGoogleSession, googleAuthConfigured, signInWithGoogle, signOutGoogle } from "@/lib/auth-client";
+import { AuthForm } from "../AuthForm";
+import { exchangeSession, signOutAuth } from "@/lib/auth-client";
 import { useLiveEngine } from "./useLiveEngine";
 import {
   joinStreamChannel,
@@ -32,7 +33,7 @@ const CATEGORIES = ["Sohbet", "Spor", "Maç Yorumu", "Oyun", "Eğlence", "Konuk 
 export function LiveStudio() {
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
-  const [authBusy, setAuthBusy] = useState(false);
+  const [roomOpen, setRoomOpen] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [stream, setStream] = useState<StreamInfo | null>(null);
@@ -103,7 +104,7 @@ export function LiveStudio() {
     }
   }, []);
 
-  /* ---------------- auth (yalnızca Google) ---------------- */
+  /* ---------------- auth (e-posta + şifre, e-posta onaylı) ---------------- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -114,7 +115,7 @@ export function LiveStudio() {
           if (!cancelled) setUser(data.user as AppUser);
           return;
         }
-        const exchanged = await exchangeGoogleSession();
+        const exchanged = await exchangeSession();
         if (cancelled) return;
         if (exchanged?.user) setUser(exchanged.user);
         else if (exchanged?.error) setAuthError(exchanged.error);
@@ -138,21 +139,10 @@ export function LiveStudio() {
       .catch(() => undefined);
   }, [user, authLoading]);
 
-  const login = async () => {
-    setAuthError(null);
-    setAuthBusy(true);
-    try {
-      await signInWithGoogle();
-    } catch (err) {
-      setAuthBusy(false);
-      setAuthError(err instanceof Error ? err.message : "Google girişi başlatılamadı");
-    }
-  };
-
   const logout = async () => {
     await engine.setMedia("off");
     await fetch("/api/auth", { method: "DELETE" });
-    await signOutGoogle();
+    await signOutAuth();
     autoMediaRef.current = false;
     setUser(null);
     setStream(null);
@@ -529,35 +519,32 @@ export function LiveStudio() {
         <div className="glass neon-ring w-full max-w-md rounded-3xl p-7">
           <p className="font-display gold-text text-3xl">Stüdyoya Gir</p>
           <p className="mt-2 text-sm text-white/60">
-            Yayıncı, moderatör, konuk ve izleyici girişi yalnızca Google hesabı ile yapılır. Aşağıdaki canlı yayın
-            odasına tıklayarak giriş yap.
+            Yayıncı, moderatör, konuk ve izleyici girişi e-posta ve şifre ile yapılır. Aşağıdaki canlı yayın odasına
+            tıklayarak giriş yap veya kayıt ol.
           </p>
 
           <button
-            onClick={() => void login()}
-            disabled={authBusy || !googleAuthConfigured}
-            className="mt-6 flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-black/40 p-4 text-left transition hover:border-gold/60 disabled:opacity-60"
+            onClick={() => setRoomOpen((v) => !v)}
+            className="mt-6 flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-black/40 p-4 text-left transition hover:border-gold/60"
           >
             <span className="min-w-0">
               <span className="block truncate font-semibold">{stream?.title ?? "Berkbey Canlı Yayın"}</span>
               <span className="mt-1 flex items-center gap-2 text-xs text-white/55">
-                <span
-                  className={`h-2 w-2 rounded-full ${roomLive ? "live-dot bg-red-500" : "bg-white/40"}`}
-                />
+                <span className={`h-2 w-2 rounded-full ${roomLive ? "live-dot bg-red-500" : "bg-white/40"}`} />
                 {roomLive ? "Canlı yayın odası aktif" : "Yayın odası (şu an yayın dışı)"}
               </span>
             </span>
-            <span className="shrink-0 rounded-xl bg-white px-3 py-2 text-xs font-bold text-black">
-              {authBusy ? "Yönlendiriliyor…" : "G · Google ile gir"}
+            <span className="shrink-0 rounded-xl bg-gold px-3 py-2 text-xs font-bold text-black">
+              {roomOpen ? "Kapat" : "Odaya gir"}
             </span>
           </button>
 
-          {!googleAuthConfigured && (
-            <p className="mt-3 text-sm text-amber-300">
-              Google girişi henüz yapılandırılmamış (NEXT_PUBLIC_SUPABASE_URL / ANON_KEY).
-            </p>
-          )}
           {authError && <p className="mt-3 text-sm text-red-300">{authError}</p>}
+          {roomOpen && (
+            <div className="mt-4">
+              <AuthForm onDone={(u) => setUser(u)} />
+            </div>
+          )}
           <Link href="/" className="mt-5 block text-center text-xs text-white/45 hover:text-gold">
             ← Ana sayfaya dön
           </Link>
@@ -706,7 +693,7 @@ export function LiveStudio() {
                   <input
                     value={modInput}
                     onChange={(e) => setModInput(e.target.value)}
-                    placeholder="Moderatör ekle (Google e-postası)"
+                    placeholder="Moderatör ekle (e-posta)"
                     className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400/50"
                   />
                   <button onClick={() => void addModerator()} className="btn-ghost rounded-xl px-4 py-2 text-sm">
@@ -923,7 +910,7 @@ export function LiveStudio() {
             <div className="glass neon-ring w-full max-w-sm rounded-3xl p-6">
               <p className="font-display text-2xl text-gold">Konuk Ol</p>
               <p className="mt-2 text-sm text-white/60">
-                Google hesabınla ({user.email}) konuk isteği gönderirsin. Onaylanınca sahneye alınırsın.
+                Hesabınla ({user.email}) konuk isteği gönderirsin. Onaylanınca sahneye alınırsın.
               </p>
               <label className="mt-4 flex items-center gap-2 text-sm">
                 <input

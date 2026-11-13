@@ -39,7 +39,7 @@ SUPABASE_DB_URL=postgresql://postgres.<ref>:<ŞİFRE>@aws-0-<bölge>.pooler.supa
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 SUPABASE_SERVICE_ROLE_KEY=<service role>   # opsiyonel
-ADMIN_EMAILS=berk@gmail.com,diger@gmail.com   # admin (yayıncı) Google hesapları
+ADMIN_EMAILS=berk@gmail.com,diger@gmail.com   # admin (yayıncı) e-posta adresleri
 ```
 
 - `SUPABASE_DB_URL`: Database → Connection string → **URI**, Transaction pooler (6543)
@@ -67,23 +67,25 @@ Build komutları değişmez: `next build`. Tüm API route'ları `runtime = "node
 websocket'i üzerinden **anlık** gidiyor demektir; `↻ POOLING` görünüyorsa anahtarlar
 yok ve sistem yedek modda çalışıyor (yine canlı, ~1.5 sn gecikme).
 
-## 5. Google ile giriş (zorunlu)
+## 5. E-posta + şifre ile kayıt/giriş (e-posta onaylı)
 
-Giriş yalnızca Google hesabı ile yapılır (yayıncı, moderatör, konuk, izleyici). Kod/şifre girişi kaldırıldı.
+Giriş ve kayıt Supabase Auth ile yapılır (ücretsiz). Akış: e-posta yaz → kayıtlıysa şifre ile giriş,
+değilse kayıt formu (Ad Soyad + şifre) açılır → "Kaydet" → e-postana onay bağlantısı gelir → bağlantıya
+tıklayınca otomatik giriş yapılır. Onaylanmamış e-posta ile oturum açılamaz.
 
-1. Google Cloud Console → APIs & Services → Credentials → **OAuth client ID (Web)** oluştur.
-   Authorized redirect URI: `https://<ref>.supabase.co/auth/v1/callback`
-2. Supabase → Authentication → Providers → **Google** → Client ID/Secret gir, aç.
-3. Supabase → Authentication → URL Configuration → Site URL ve Redirect URLs'e
+1. Supabase → Authentication → Providers → **Email** açık olsun, **Confirm email** işaretli kalsın.
+2. Authentication → URL Configuration → Site URL ve Redirect URLs'e
    `https://<alan-adın>/canli` ve `https://<alan-adın>/panel` ekle (yerelde `http://localhost:3000/**`).
-4. Vercel'de `ADMIN_EMAILS` tanımla. Bu e-postalarla giren kişi **admin (yayıncı)** olur.
+3. Önemli: Supabase'in yerleşik e-posta servisi saatte yalnızca birkaç e-posta gönderir.
+   Gerçek kullanımda Authentication → SMTP Settings'ten kendi SMTP'ni bağla (Resend, Brevo, Gmail SMTP vb.).
+4. Vercel'de `ADMIN_EMAILS` tanımla. Bu e-postalarla kayıt olup onaylayan kişi **admin (yayıncı)** olur.
 
 | Rol | Nasıl olunur |
 | --- | --- |
 | Admin / Yayıncı | E-postası `ADMIN_EMAILS` içinde |
-| Moderatör | Admin, panelden Google e-postasını ekler; o hesapla girince otomatik moderatör olur |
-| Konuk | Herhangi bir Google hesabı → `🎤 Konuk Ol` → admin/moderatör onaylar (kamera kapalı katılma seçeneği var) |
-| İzleyici | Diğer tüm Google hesapları |
+| Moderatör | Admin, panelden e-postasını ekler; o e-postayla kayıt olup onaylayınca moderatör olur |
+| Konuk | Kayıtlı herhangi bir hesap → `🎤 Konuk Ol` → admin/moderatör onaylar (kamera kapalı katılma seçeneği var) |
+| İzleyici | Diğer tüm kayıtlı hesaplar |
 
 ## 6. Ekran davranışı
 

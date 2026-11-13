@@ -1,24 +1,24 @@
 import { createClient } from "@supabase/supabase-js";
 import { ensureSeed } from "@/lib/seed";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/lib/supabase-server";
-import { createSession, destroySession, getCurrentUser, toCurrentUser, upsertGoogleUser } from "@/lib/session";
+import { createSession, destroySession, getCurrentUser, toCurrentUser, upsertAuthUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Google (Supabase Auth) erişim jetonunu doğrular ve oturum çerezi açar. */
+/** Supabase Auth (e-posta + şifre) erişim jetonunu doğrular ve oturum çerezi açar. */
 export async function POST(request: Request) {
   await ensureSeed();
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return Response.json(
-      { ok: false, error: "Google girişi yapılandırılmamış (Supabase URL / anon key eksik)." },
+      { ok: false, error: "Giriş sistemi yapılandırılmamış (Supabase URL / anon key eksik)." },
       { status: 503 },
     );
   }
 
   const payload: { accessToken?: string } = await request.json().catch(() => ({}));
   const token = (payload.accessToken ?? "").trim();
-  if (!token) return Response.json({ ok: false, error: "Google oturumu bulunamadı." }, { status: 400 });
+  if (!token) return Response.json({ ok: false, error: "Oturum bulunamadı." }, { status: 400 });
 
   const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -26,19 +26,20 @@ export async function POST(request: Request) {
   const { data, error } = await client.auth.getUser(token);
   const gUser = data?.user;
   if (error || !gUser?.email) {
-    return Response.json({ ok: false, error: "Google oturumu doğrulanamadı." }, { status: 401 });
+    return Response.json({ ok: false, error: "Oturum doğrulanamadı." }, { status: 401 });
   }
-  const isGoogle =
-    gUser.app_metadata?.provider === "google" || (gUser.identities ?? []).some((i) => i.provider === "google");
-  if (!isGoogle) {
-    return Response.json({ ok: false, error: "Yalnızca Google hesabı ile giriş yapılabilir." }, { status: 403 });
+  if (!gUser.email_confirmed_at) {
+    return Response.json(
+      { ok: false, error: "E-posta adresin henüz onaylanmamış. Gelen kutundaki bağlantıya tıkla." },
+      { status: 403 },
+    );
   }
 
   const meta = (gUser.user_metadata ?? {}) as Record<string, unknown>;
-  const name = String(meta.full_name ?? meta.name ?? "");
+  const name = String(meta.full_name ?? meta.name ?? "");  // kayıt formundaki Ad Soyad
   const avatar = String(meta.avatar_url ?? meta.picture ?? "") || null;
 
-  const user = await upsertGoogleUser({ email: gUser.email, name, avatarUrl: avatar });
+  const user = await upsertAuthUser({ email: gUser.email, name, avatarUrl: avatar });
   if (user.bannedUntil && user.bannedUntil.getTime() > Date.now()) {
     return Response.json({ ok: false, error: "Hesabınız yayından uzaklaştırılmış." }, { status: 403 });
   }

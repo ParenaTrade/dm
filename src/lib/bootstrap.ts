@@ -137,7 +137,7 @@ async function runBootstrap() {
     await db.execute(statement);
   }
 
-  // ---- eski demo hesapları temizle (yalnızca Google hesabı olan yetkililer kalır) ----
+  // ---- eski demo hesapları temizle (yalnızca e-postası olan yetkililer kalır) ----
   await db.execute(sql`DELETE FROM moderators WHERE email IS NULL`);
   await db.execute(sql`UPDATE users SET role = 'viewer' WHERE email IS NULL AND role IN ('host', 'moderator')`);
 

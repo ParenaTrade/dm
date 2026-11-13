@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { DeployStatus } from "@/components/DeployStatus";
-import { exchangeGoogleSession, googleAuthConfigured, signInWithGoogle } from "@/lib/auth-client";
+import { AuthForm } from "@/components/AuthForm";
+import { exchangeSession } from "@/lib/auth-client";
 import { ROLE_LABELS, roleBadgeClass, type AppUser, type ChatMessageInfo, type ModeratorInfo } from "@/lib/types";
 
 type PanelUser = {
@@ -24,7 +25,6 @@ export function PanelClient() {
   const [loading, setLoading] = useState(true);
   const [allowed, setAllowed] = useState(false);
   const [me, setMe] = useState<AppUser | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("mods");
@@ -40,7 +40,7 @@ export function PanelClient() {
     const meRes = await fetch("/api/auth", { cache: "no-store" }).then((r) => r.json()).catch(() => null);
     if (meRes?.user) setMe(meRes.user as AppUser);
     else {
-      const ex = await exchangeGoogleSession();
+      const ex = await exchangeSession();
       if (ex?.user) setMe(ex.user);
       else if (ex?.error) setError(ex.error);
     }
@@ -76,17 +76,6 @@ export function PanelClient() {
     const timer = setInterval(() => void loadAll(), 6000);
     return () => clearInterval(timer);
   }, [loadAll]);
-
-  const login = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      await signInWithGoogle();
-    } catch (err) {
-      setBusy(false);
-      setError(err instanceof Error ? err.message : "Google girişi başlatılamadı");
-    }
-  };
 
   const isHost = me?.role === "host";
 
@@ -134,25 +123,16 @@ export function PanelClient() {
         <div className="glass neon-ring w-full max-w-md rounded-3xl p-7">
           <p className="font-display gold-text text-3xl">Admin / Moderatör Paneli</p>
           <p className="mt-2 text-sm text-white/60">
-            Bu panele yalnızca yetkili Google hesapları girebilir.
+            Bu panele yalnızca yetkili hesaplar girebilir. E-posta ve şifrenle giriş yap.
           </p>
           <div className="mt-5 space-y-3">
             {error && <p className="text-sm text-red-300">{error}</p>}
             {me && (
               <p className="text-sm text-amber-300">
-                {me.email} hesabının bu panele yetkisi yok. Yetkili bir Google hesabıyla tekrar giriş yap.
+                {me.email} hesabının bu panele yetkisi yok. Yetkili bir hesapla giriş yapmalısın.
               </p>
             )}
-            {!googleAuthConfigured && (
-              <p className="text-sm text-amber-300">Google girişi yapılandırılmamış (Supabase anahtarları eksik).</p>
-            )}
-            <button
-              onClick={() => void login()}
-              disabled={busy || !googleAuthConfigured}
-              className="btn-gold w-full rounded-xl py-3 font-bold disabled:opacity-60"
-            >
-              {busy ? "Yönlendiriliyor…" : "Google ile Giriş Yap"}
-            </button>
+            <AuthForm onDone={() => void loadAll()} />
             <Link href="/canli" className="block text-center text-xs text-white/45 hover:text-gold">
               ← Stüdyoya dön
             </Link>
@@ -215,7 +195,7 @@ export function PanelClient() {
               <input
                 value={modInput}
                 onChange={(e) => setModInput(e.target.value)}
-                placeholder="Moderatör ekle: Google e-postası (örn. ayse@gmail.com)"
+                placeholder="Moderatör ekle: e-posta (kayıt olup onaylayınca moderatör olur)"
                 className="min-w-[220px] flex-1 rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-cyan-400/50"
               />
               <button onClick={() => void addModerator()} className="btn-gold rounded-xl px-5 py-3 text-sm font-bold">

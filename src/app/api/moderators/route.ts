@@ -30,7 +30,7 @@ export async function GET() {
   });
 }
 
-/** Yalnızca admin (yayıncı): Google e-postası ile moderatör ekler. */
+/** Yalnızca admin (yayıncı): e-posta ile moderatör ekler. */
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user || user.role !== "host") {
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   const payload: { email?: string; note?: string } = await request.json().catch(() => ({}));
   const email = (payload.email ?? "").trim().toLowerCase();
   if (!EMAIL_RE.test(email)) {
-    return Response.json({ ok: false, error: "Geçerli bir Google e-posta adresi gir." }, { status: 400 });
+    return Response.json({ ok: false, error: "Geçerli bir e-posta adresi gir." }, { status: 400 });
   }
 
   const existingUser = await findUserByEmail(email);

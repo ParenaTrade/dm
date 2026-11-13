@@ -23,7 +23,7 @@ const STUDIO_FEATURES = [
   },
   {
     title: "Konuk Davet Sistemi",
-    desc: "Google hesabı ile katılım, bekleme listesi, tek tuşla onaylama, susturma ve yayından çıkarma.",
+    desc: "Kayıtlı hesap ile katılım, bekleme listesi, tek tuşla onaylama, susturma ve yayından çıkarma.",
     tag: "KONUK",
   },
   {
@@ -160,7 +160,7 @@ export default async function HomePage() {
             <p className="mt-5 text-xs text-white/40">
               {isLive && streamRow?.startedAt
                 ? `Yayın ${formatTime(streamRow.startedAt)} itibarıyla sürüyor`
-                : "Google hesabınla stüdyodan takip et"}
+                : "E-posta ile kayıt ol, stüdyodan takip et"}
             </p>
 
             <Link
@@ -186,7 +186,7 @@ export default async function HomePage() {
             ) : (
               <>
                 <span className="mr-2 inline-block h-2 w-2 rounded-full bg-white/40 align-middle" />
-                Yayın şu an kapalı. Google hesabınla stüdyoyu ziyaret et ve bir sonraki seansı bekle.
+                Yayın şu an kapalı. Kayıt olup stüdyoyu ziyaret et ve bir sonraki seansı bekle.
               </>
             )}
           </p>
@@ -393,7 +393,7 @@ export default async function HomePage() {
           <div>
             <p className="mb-3 text-sm font-bold uppercase tracking-wider text-gold">Bilgi</p>
             <p className="text-sm text-white/50">
-              Yayın altyapısı tarayıcılar arası WebRTC ile çalışır. Giriş yalnızca Google hesabı ile yapılır.
+              Yayın altyapısı tarayıcılar arası WebRTC ile çalışır. Giriş e-posta ve şifre ile yapılır, e-posta onayı gerekir.
             </p>
           </div>
         </div>

@@ -42,8 +42,8 @@ export function adminEmails(): string[] {
     .filter(Boolean);
 }
 
-/** Google hesabıyla gelen kullanıcıyı oluşturur/günceller; rolü e-postadan türetir. */
-export async function upsertGoogleUser(profile: {
+/** E-posta ile kayıtlı (onaylı) kullanıcıyı oluşturur/günceller; rolü e-postadan türetir. */
+export async function upsertAuthUser(profile: {
   email: string;
   name: string;
   avatarUrl: string | null;

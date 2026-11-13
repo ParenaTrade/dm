@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     const rows = await db.select().from(users).where(eq(users.id, Number(payload.userId))).limit(1);
     const target = rows[0];
     if (!target?.email) {
-      return Response.json({ ok: false, error: "Yalnızca Google hesabı olan kullanıcılar yetkilendirilebilir." }, { status: 400 });
+      return Response.json({ ok: false, error: "Yalnızca e-postası kayıtlı kullanıcılar yetkilendirilebilir." }, { status: 400 });
     }
     if (target.role === "host") {
       return Response.json({ ok: false, error: "Admin rolü değiştirilemez." }, { status: 400 });
