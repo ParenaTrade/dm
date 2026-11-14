@@ -74,6 +74,7 @@ export function useLiveEngine(params: {
   const localStreamRef = useRef<MediaStream | null>(null);
   const silentTrack = useRef<MediaStreamTrack | null>(null);
   const micCleanup = useRef<(() => void) | null>(null);
+  const screenCleanup = useRef<(() => void) | null>(null);
   const localScreenRef = useRef<MediaStream | null>(null);
   const screenSenders = useRef(new Map<number, RTCRtpSender[]>());
   const incoming = useRef(new Map<number, Map<string, MediaStream>>());
@@ -581,6 +582,8 @@ export function useLiveEngine(params: {
   );
 
   const stopScreen = useCallback(() => {
+    screenCleanup.current?.();
+    screenCleanup.current = null;
     localScreenRef.current?.getTracks().forEach((track) => track.stop());
     localScreenRef.current = null;
     setLocalScreen(null);
@@ -592,6 +595,8 @@ export function useLiveEngine(params: {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
+      screenCleanup.current?.();
+      screenCleanup.current = null;
       localScreenRef.current?.getTracks().forEach((track) => track.stop());
       stream.getVideoTracks()[0]?.addEventListener("ended", () => stopScreen());
       localScreenRef.current = stream;
@@ -605,6 +610,86 @@ export function useLiveEngine(params: {
       );
     }
   }, [attachScreen, stopScreen]);
+
+  /**
+   * Yayıncı: cihazdaki video / görseli canlı ekrana koy (tüm izleyicilere WebRTC ile gider).
+   * Ekran paylaşımıyla aynı kanalı kullanır; "Paylaşımı Durdur" ile kapanır.
+   */
+  const startMedia = useCallback(
+    async (file: File) => {
+      setError(null);
+      try {
+        const url = URL.createObjectURL(file);
+        let stream: MediaStream;
+        let cleanup: () => void;
+
+        if (file.type.startsWith("image/")) {
+          const img = new Image();
+          img.src = url;
+          await img.decode();
+          const canvas = document.createElement("canvas");
+          canvas.width = 1280;
+          canvas.height = 720;
+          const g = canvas.getContext("2d")!;
+          const draw = () => {
+            g.fillStyle = "#000";
+            g.fillRect(0, 0, canvas.width, canvas.height);
+            const r = Math.min(canvas.width / img.width, canvas.height / img.height);
+            const w = img.width * r;
+            const h = img.height * r;
+            g.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+          };
+          draw();
+          const timer = window.setInterval(draw, 500); // akış kesilmesin
+          stream = canvas.captureStream(5);
+          cleanup = () => {
+            window.clearInterval(timer);
+            URL.revokeObjectURL(url);
+          };
+        } else if (file.type.startsWith("video/")) {
+          const video = document.createElement("video");
+          video.src = url;
+          video.loop = true;
+          video.playsInline = true;
+          await video.play();
+          const capture = (video as HTMLVideoElement & { captureStream?: () => MediaStream }).captureStream?.();
+          if (!capture) throw new Error("captureStream desteklenmiyor");
+          stream = new MediaStream(capture.getVideoTracks());
+          // Ses: yerel hoparlöre vermeden (yankı olmasın) doğrudan yayına gönder
+          let ctx: AudioContext | null = null;
+          try {
+            ctx = new AudioContext();
+            const src = ctx.createMediaElementSource(video);
+            const dest = ctx.createMediaStreamDestination();
+            src.connect(dest);
+            dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+          } catch {
+            capture.getAudioTracks().forEach((t) => stream.addTrack(t));
+          }
+          cleanup = () => {
+            video.pause();
+            video.removeAttribute("src");
+            video.load();
+            URL.revokeObjectURL(url);
+            void ctx?.close().catch(() => undefined);
+          };
+        } else {
+          URL.revokeObjectURL(url);
+          throw new Error("unsupported");
+        }
+
+        screenCleanup.current?.();
+        localScreenRef.current?.getTracks().forEach((track) => track.stop());
+        screenCleanup.current = cleanup;
+        localScreenRef.current = stream;
+        setLocalScreen(stream);
+        for (const [, ctx] of peers.current) attachScreen(ctx);
+      } catch {
+        setError("Bu dosya canlı ekrana alınamadı. MP4/WebM video veya JPG/PNG görsel dene (Chrome önerilir).");
+      }
+    },
+    [attachScreen],
+  );
 
   const toggleAudio = useCallback(() => {
     const track = localStreamRef.current?.getAudioTracks()[0];
@@ -645,6 +730,7 @@ export function useLiveEngine(params: {
       micCleanup.current?.();
       micCleanup.current = null;
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      screenCleanup.current?.();
       localScreenRef.current?.getTracks().forEach((track) => track.stop());
       silentTrack.current?.stop();
       silentTrack.current = null;
@@ -661,6 +747,7 @@ export function useLiveEngine(params: {
     error,
     setMedia,
     startScreen,
+    startMedia,
     stopScreen,
     toggleAudio,
     toggleVideo,

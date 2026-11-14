@@ -590,6 +590,52 @@ export function LiveStudio() {
     }
   };
 
+  // Sponsor / oyun siteleri (yayıncının tarayıcısında saklanır)
+  type Sponsor = { id: string; name: string; url: string };
+  const [sponsors, setSponsors] = useState<Sponsor[]>([]);
+  const [sponsorId, setSponsorId] = useState("");
+  const [sponsorOpen, setSponsorOpen] = useState(false);
+  const [sponsorName, setSponsorName] = useState("");
+  const [sponsorUrl, setSponsorUrl] = useState("");
+  const [studioHint, setStudioHint] = useState<string | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("berkbey.sponsors");
+      if (raw) setSponsors(JSON.parse(raw) as Sponsor[]);
+    } catch {
+      /* noop */
+    }
+  }, []);
+  const saveSponsors = (next: Sponsor[]) => {
+    setSponsors(next);
+    try {
+      localStorage.setItem("berkbey.sponsors", JSON.stringify(next));
+    } catch {
+      /* noop */
+    }
+  };
+  const addSponsor = () => {
+    const name = sponsorName.trim();
+    let url = sponsorUrl.trim();
+    if (!name || !url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    const item = { id: `${Date.now()}`, name, url };
+    saveSponsors([...sponsors, item]);
+    setSponsorId(item.id);
+    setSponsorName("");
+    setSponsorUrl("");
+  };
+  /** Seçili sponsor sitesini yeni sekmede aç + ekran paylaşımını başlat (o sekmeyi seç). */
+  const goLiveWithSponsor = () => {
+    const sp = sponsors.find((x) => x.id === sponsorId);
+    if (!sp) return;
+    window.open(sp.url, "_blank", "noopener");
+    setStudioHint(`"${sp.name}" yeni sekmede açıldı. Açılan pencerede O SEKMEYİ seç ve "Sekme sesini paylaş"ı işaretle.`);
+    window.setTimeout(() => setStudioHint(null), 12000);
+    void engine.startScreen();
+  };
+
   /* Moderatör (yayını sunan kişi) canlı yayın varken kamerasını otomatik açar (mikrofon kapalı başlar).
      Sahneye alınan konuk kamerasını açar (yüzünü göstermek istemiyorsa kapalı kalır).
      Yenilemeden sonra yayıncı kamerası kendiliğinden geri gelir. */
@@ -1177,6 +1223,68 @@ export function LiveStudio() {
           )}
 
           {isHost && (
+            <>
+              <select
+                value={sponsorId}
+                onChange={(e) => setSponsorId(e.target.value)}
+                className="rounded-xl border border-white/10 bg-ink2 px-3 py-2.5 text-sm text-white"
+                title="Sponsor / oyun sitesi"
+              >
+                <option value="">🎰 Sponsor / Oyun sitesi seç…</option>
+                {sponsors.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={goLiveWithSponsor}
+                disabled={!sponsorId}
+                className="btn-ghost rounded-xl px-4 py-2.5 text-sm disabled:opacity-40"
+              >
+                ▶ Siteyi Yayına Al
+              </button>
+              <button onClick={() => setSponsorOpen(true)} className="btn-ghost rounded-xl px-4 py-2.5 text-sm">
+                ⚙ Sponsorlar
+              </button>
+              <input
+                ref={mediaInputRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) void engine.startMedia(f);
+                }}
+              />
+              <button onClick={() => mediaInputRef.current?.click()} className="btn-ghost rounded-xl px-4 py-2.5 text-sm">
+                🖼 Video / Görsel Göster
+              </button>
+            </>
+          )}
+
+          {isStaff && streamLive && (
+            <div className="flex overflow-hidden rounded-xl border border-white/10 text-sm">
+              {(
+                [
+                  ["screen", "🎮 Ekran"],
+                  ["host", "🎥 Kamera"],
+                  ["mod", "🛡 Moderatör"],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => void setFocus(k)}
+                  className={`px-3 py-2.5 ${(stream?.stageLayout ?? "screen") === k ? "bg-gold text-black font-bold" : "hover:bg-white/10"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {isHost && (
             <button
               onClick={() => void (engine.screenStream ? engine.stopScreen() : engine.startScreen())}
               className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${engine.screenStream ? "text-emerald-300" : ""}`}
@@ -1217,6 +1325,63 @@ export function LiveStudio() {
             </Link>
           )}
         </div>
+
+        {studioHint && (
+          <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+            {studioHint}
+          </div>
+        )}
+
+        {sponsorOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <div className="glass neon-ring w-full max-w-md rounded-3xl p-6">
+              <p className="font-display text-2xl text-gold">Sponsorlar / Oyun siteleri</p>
+              <p className="mt-1 text-xs text-white/50">Liste bu tarayıcıda saklanır. Seçince site yeni sekmede açılır ve ekran paylaşımı başlar.</p>
+              <div className="mt-4 max-h-48 space-y-2 overflow-y-auto">
+                {sponsors.length === 0 && <p className="text-sm text-white/40">Henüz sponsor yok.</p>}
+                {sponsors.map((x) => (
+                  <div key={x.id} className="flex items-center justify-between gap-2 rounded-xl bg-white/5 px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold">{x.name}</p>
+                      <p className="truncate text-xs text-white/40">{x.url}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        saveSponsors(sponsors.filter((y) => y.id !== x.id));
+                        if (sponsorId === x.id) setSponsorId("");
+                      }}
+                      className="rounded-lg bg-red-500/25 px-2 py-1 text-xs text-red-200 hover:bg-red-500/45"
+                    >
+                      Sil
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 space-y-2">
+                <input
+                  value={sponsorName}
+                  onChange={(e) => setSponsorName(e.target.value)}
+                  placeholder="Sponsor adı"
+                  className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm outline-none"
+                />
+                <input
+                  value={sponsorUrl}
+                  onChange={(e) => setSponsorUrl(e.target.value)}
+                  placeholder="Site adresi (https://...)"
+                  className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm outline-none"
+                />
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setSponsorOpen(false)} className="btn-ghost rounded-xl px-4 py-2 text-sm">
+                  Kapat
+                </button>
+                <button onClick={addSponsor} className="rounded-xl bg-gold px-4 py-2 text-sm font-bold text-black">
+                  Ekle
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* RENAME DIALOG */}
         {renameOpen && (
