@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatPanel } from "./ChatPanel";
-import { VideoTile } from "./VideoTile";
 import { SelfPip } from "./SelfPip";
 import { StageVideo } from "./StageVideo";
+import { AudioSink } from "./AudioSink";
 import { SystemStatusButton } from "../SystemStatusButton";
 import { AuthForm } from "../AuthForm";
 import { exchangeSession, getSessionEmail, onAuthChange, renameNickname, signOutAuth } from "@/lib/auth-client";
@@ -549,7 +549,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
   const onStageGuest = me?.role === "guest" && me.status === "live";
   const isMod = user?.role === "moderator";
   // Popup kameraları (tek tık: gizle / canlı ekrana tek tık: göster)
-  const [popupsHidden, setPopupsHidden] = useState(false);
+  const [spotlightKey, setSpotlightKey] = useState<string | null>(null);
   // Moderatör cihazında dinleme: varsayılan KAPALI (aynı odada yayıncı laptopu ile çınlama/uğultu yapmasın)
   const [listenPref, setListenPref] = useState<boolean | null>(null);
   const listenOff = listenPref ?? isMod;
@@ -840,7 +840,6 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
   const hostP = participants.find((p) => p.role === "host" && p.status === "live");
   const canPublish = isHost || isMod || onStageGuest;
   const showPip = !isHost && onStageGuest;
-  const stageOthers = liveOthers.filter((p) => p.role === "guest");
 
   return (
     <div className="mx-auto grid max-w-[1560px] gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_390px] lg:p-5">
@@ -1012,6 +1011,8 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
               showVideo: boolean;
               mirror: boolean;
               muted: boolean;
+              /** Kamera kaynağı: sesi gizli ses oynatıcıdan gelir (görüntü kutuları hep sessiz). */
+              camera?: boolean;
               fallback: React.ReactNode;
             };
             const avatar = (name: string) => (
@@ -1049,6 +1050,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                 showVideo: iAmPresenter ? camOn && engine.mediaKind !== "off" : modP.cameraOn,
                 mirror: iAmPresenter,
                 muted: iAmPresenter,
+                camera: true,
                 fallback: avatar(modP.nickname),
               };
             }
@@ -1060,6 +1062,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                 showVideo: isHost ? engine.mediaKind !== "off" && camOn : Boolean(hostP?.cameraOn),
                 mirror: isHost,
                 muted: isHost,
+                camera: true,
                 fallback: hostP || isHost ? avatar(hostName) : <span className="text-sm">Yayıncı bağlanıyor...</span>,
               };
             }
@@ -1080,8 +1083,60 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
             const defaultFocus = sources.screen ? "screen" : "host";
             const stored = (stream?.stageLayout ?? "screen") as "screen" | "mod" | "host";
             const focus = sources[stored] ? stored : defaultFocus;
-            const popups = available.filter((k) => k !== focus);
             const main = sources[focus];
+            void available;
+
+            // Sağ üst liste: yayıncı en üstte, sonra moderatör(ler), sonra konuklar (sahne sırasıyla)
+            type Tile = {
+              key: string;
+              role: "host" | "moderator" | "guest";
+              label: string;
+              stream: MediaStream | null;
+              showVideo: boolean;
+              mirror: boolean;
+              fallback: React.ReactNode;
+              focusKey?: "mod" | "host";
+            };
+            const tiles: Tile[] = [];
+            if (sources.host) {
+              tiles.push({
+                key: "host",
+                role: "host",
+                label: `${hostName} (yayıncı)`,
+                stream: sources.host.stream,
+                showVideo: sources.host.showVideo,
+                mirror: sources.host.mirror,
+                fallback: sources.host.fallback,
+                focusKey: "host",
+              });
+            }
+            for (const m of participants.filter((p) => p.role === "moderator" && p.status === "live" && p.cameraOn)) {
+              const mine = m.userId === user.id;
+              tiles.push({
+                key: `m${m.userId}`,
+                role: "moderator",
+                label: m.nickname,
+                stream: mine ? engine.localStream : (engine.remoteStreams[m.userId] ?? null),
+                showVideo: mine ? camOn && engine.mediaKind !== "off" : m.cameraOn,
+                mirror: mine,
+                fallback: avatar(m.nickname),
+                focusKey: "mod",
+              });
+            }
+            for (const g of participants.filter((p) => p.role === "guest" && p.status === "live")) {
+              if (g.userId === user.id) continue; // kendi görüntün zaten sağ altta (SelfPip)
+              tiles.push({
+                key: `g${g.userId}`,
+                role: "guest",
+                label: g.nickname,
+                stream: engine.remoteStreams[g.userId] ?? null,
+                showVideo: g.cameraOn,
+                mirror: false,
+                fallback: avatar(g.nickname),
+              });
+            }
+            const spot = spotlightKey ? tiles.find((t) => t.key === spotlightKey) : undefined;
+            const roleIcon = (r: Tile["role"]) => (r === "host" ? "👑" : r === "moderator" ? "🛡" : "🎤");
 
             return (
               <div
@@ -1092,10 +1147,9 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
               >
                 <StageVideo
                   stream={main?.stream ?? null}
-                  muted={main?.muted || listenOff}
+                  muted={main?.camera ? true : Boolean(main?.muted) || listenOff}
                   mirror={main?.mirror}
                   fit={main?.fit ?? "cover"}
-                  onClick={popupsHidden && popups.length > 0 ? () => setPopupsHidden(false) : undefined}
                   showVideo={main?.showVideo ?? false}
                   fallback={main?.fallback ?? <span className="text-sm">Yayıncı bağlanıyor...</span>}
                   onDoubleClick={isStaff && focus !== defaultFocus ? () => void setFocus(defaultFocus) : undefined}
@@ -1127,54 +1181,36 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                   )}
                 </button>
 
-                {/* Popup kameralar: yayıncı/diğerleri solda (16:9), moderatör SAĞ ÜSTTE KARE. Popup'a tek tık: gizle. */}
-                {!popupsHidden &&
-                  (["left", "right"] as const).map((side) => {
-                    const list = popups.filter((k) => (side === "right" ? k === "mod" : k !== "mod"));
-                    if (list.length === 0) return null;
-                    return (
-                      <div
-                        key={side}
-                        className={`absolute top-3 z-10 flex flex-col gap-2 ${side === "right" ? "right-3" : "left-3"}`}
+                {/* Kamera listesi: sağ üst, aşağı doğru kaydırılır. Karta tıkla: ortada büyük göster. */}
+                {tiles.length > 0 && (
+                  <div className="chat-scroll absolute right-3 top-3 z-10 flex max-h-[62%] w-[88px] flex-col gap-2 overflow-y-auto overscroll-contain pr-1 sm:w-[104px]">
+                    {tiles.map((t) => (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => setSpotlightKey(t.key)}
+                        title={`${t.label} — büyük göster`}
+                        className="group relative aspect-square w-full shrink-0 overflow-hidden rounded-xl border-2 border-gold/60 bg-black text-left shadow-lg shadow-black/60 transition hover:border-gold"
                       >
-                        {list.map((k) => {
-                          const src = sources[k]!;
-                          const square = k === "mod" || k === "host";
-                          return (
-                            <StageVideo
-                              key={k}
-                              stream={src.stream}
-                              muted={src.muted || listenOff}
-                              mirror={src.mirror}
-                              fit={square ? "cover" : src.fit}
-                              showVideo={src.showVideo}
-                              fallback={src.fallback}
-                              onClick={() => setPopupsHidden(true)}
-                              className={`${
-                                square ? "aspect-square w-24 sm:w-36" : "aspect-video w-32 sm:w-52"
-                              } rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60`}
-                            >
-                              <span className="pointer-events-none absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
-                                {src.label}
-                              </span>
-                              {isStaff && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void setFocus(k);
-                                  }}
-                                  title="Ana ekranla yer değiştir (herkes için)"
-                                  className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white/80 hover:bg-black/80"
-                                >
-                                  ⇄
-                                </button>
-                              )}
-                            </StageVideo>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
+                        <StageVideo
+                          stream={t.stream}
+                          muted
+                          mirror={t.mirror}
+                          fit="cover"
+                          showVideo={t.showVideo}
+                          fallback={t.fallback}
+                          className="pointer-events-none h-full w-full"
+                        />
+                        <span className="pointer-events-none absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] leading-4">
+                          {roleIcon(t.role)}
+                        </span>
+                        <span className="pointer-events-none absolute inset-x-1 bottom-1 truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
+                          {t.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {showPip && (
                   <SelfPip
@@ -1188,29 +1224,62 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                     onStart={toggleCam}
                   />
                 )}
+
+                {/* Büyük gösterim: ortada popup, X ile listeye dön */}
+                {spot && (
+                  <div
+                    className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+                    onClick={() => setSpotlightKey(null)}
+                  >
+                    <div
+                      className="relative w-full max-w-3xl overflow-hidden rounded-2xl border-2 border-gold/70 bg-black shadow-2xl shadow-black"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <StageVideo
+                        stream={spot.stream}
+                        muted
+                        mirror={spot.mirror}
+                        fit="cover"
+                        showVideo={spot.showVideo}
+                        fallback={spot.fallback}
+                        className="aspect-video w-full"
+                      >
+                        <span className="absolute bottom-3 left-3 rounded-lg bg-black/60 px-2.5 py-1 text-sm font-semibold">
+                          {roleIcon(spot.role)} {spot.label}
+                        </span>
+                      </StageVideo>
+                      <button
+                        onClick={() => setSpotlightKey(null)}
+                        aria-label="Kapat"
+                        title="Kapat (listeye dön)"
+                        className="absolute right-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/70 text-lg font-bold text-white hover:bg-red-600"
+                      >
+                        ✕
+                      </button>
+                      {isStaff && spot.focusKey && (
+                        <button
+                          onClick={() => {
+                            void setFocus(spot.focusKey!);
+                            setSpotlightKey(null);
+                          }}
+                          className="absolute left-3 top-3 z-20 rounded-lg bg-black/70 px-3 py-1.5 text-xs text-white/90 hover:bg-black"
+                        >
+                          ⇄ Ana ekrana al (herkes için)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
 
-          {/* Sahnedeki konuklar (yayıncı üzerinden herkese aktarılır) */}
-          {stageOthers.length > 0 && (
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {stageOthers.map((p) => (
-                <VideoTile
-                  key={p.id}
-                  muted={listenOff}
-                  stream={engine.remoteStreams[p.userId] ?? null}
-                  label={p.nickname}
-                  role={p.role}
-                  cameraOn={p.cameraOn}
-                  micOn={p.micOn}
-                  handRaised={p.handRaised}
-                  accent="#a855f7"
-                  state={engine.peerStates[p.userId] ?? (isHost ? undefined : engine.peerStates[hostP?.userId ?? -1])}
-                />
-              ))}
-            </div>
-          )}
+          {/* Gizli ses oynatıcıları: yayıncı / moderatör / konuk sesleri (kendi sesin hariç) */}
+          {Object.entries(engine.remoteStreams)
+            .filter(([uid]) => Number(uid) !== user.id)
+            .map(([uid, st]) => (
+              <AudioSink key={uid} stream={st} muted={listenOff} />
+            ))}
 
           {me?.status === "waiting" && (
             <div className="mt-3 rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
