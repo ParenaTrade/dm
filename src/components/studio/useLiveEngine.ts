@@ -78,7 +78,12 @@ export function useLiveEngine(params: {
   const localScreenRef = useRef<MediaStream | null>(null);
   const screenSenders = useRef(new Map<number, RTCRtpSender[]>());
   const incoming = useRef(new Map<number, Map<string, MediaStream>>());
-  const screenMeta = useRef(new Map<number, { screenId: string | null; relays: Record<string, number> }>());
+  const screenMeta = useRef(
+    new Map<number, { screenId: string | null; relays: Record<string, number>; screenRelays: Record<string, number> }>(),
+  );
+  const screenStreams = useRef<Record<number, MediaStream>>({});
+  const relayedScreenUsers = useRef(new Map<number, Set<number>>());
+  const screenRelaySenders = useRef(new Map<string, RTCRtpSender[]>());
   const sid = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
   const remoteSid = useRef(new Map<number, string>());
   const greeted = useRef<number | null>(null);
@@ -158,7 +163,18 @@ export function useLiveEngine(params: {
         const stream = camStreams.current[Number(fromS)];
         if (stream) relays[stream.id] = Number(fromS);
       }
-      queue({ to, kind: "meta", body: JSON.stringify({ screenId: localScreenRef.current?.id ?? null, relays }) });
+      const screenRelays: Record<string, number> = {};
+      for (const [key] of screenRelaySenders.current) {
+        const [toS, fromS] = key.split(":");
+        if (Number(toS) !== to) continue;
+        const stream = screenStreams.current[Number(fromS)];
+        if (stream) screenRelays[stream.id] = Number(fromS);
+      }
+      queue({
+        to,
+        kind: "meta",
+        body: JSON.stringify({ screenId: localScreenRef.current?.id ?? null, relays, screenRelays }),
+      });
     },
     [queue],
   );
@@ -208,6 +224,48 @@ export function useLiveEngine(params: {
         changed = true;
       }
     }
+
+    // Moderatör ekran paylaşımını da herkese aktar
+    for (const [key, senders] of Array.from(screenRelaySenders.current)) {
+      const [toS, fromS] = key.split(":");
+      const toCtx = peers.current.get(Number(toS));
+      if (!toCtx || !wanted.has(Number(fromS)) || !screenStreams.current[Number(fromS)]) {
+        if (toCtx) {
+          for (const sender of senders) {
+            try {
+              toCtx.pc.removeTrack(sender);
+            } catch {
+              /* noop */
+            }
+          }
+        }
+        screenRelaySenders.current.delete(key);
+        changed = true;
+      }
+    }
+    for (const from of wanted) {
+      const source = screenStreams.current[from];
+      if (!source) continue;
+      const tracks = source.getTracks();
+      for (const [to, ctx] of peers.current) {
+        if (to === from) continue;
+        const key = `${to}:${from}`;
+        const existing = screenRelaySenders.current.get(key);
+        if (existing && existing.length === tracks.length) continue;
+        existing?.forEach((sender) => {
+          try {
+            ctx.pc.removeTrack(sender);
+          } catch {
+            /* noop */
+          }
+        });
+        screenRelaySenders.current.set(
+          key,
+          tracks.map((track) => ctx.pc.addTrack(track, source)),
+        );
+        changed = true;
+      }
+    }
     if (changed) for (const [to] of peers.current) sendMeta(to);
   }, [sendMeta]);
 
@@ -241,10 +299,23 @@ export function useLiveEngine(params: {
     const meta = screenMeta.current.get(remoteId);
     const screenId = meta?.screenId ?? null;
     const relays = meta?.relays ?? {};
+    const screenRelays = meta?.screenRelays ?? {};
     const streams = Array.from(map.values());
 
-    const camera = streams.find((st) => st.id !== screenId && relays[st.id] === undefined);
+    const camera = streams.find(
+      (st) => st.id !== screenId && relays[st.id] === undefined && screenRelays[st.id] === undefined,
+    );
     const screen = screenId ? map.get(screenId) : undefined;
+    if (screen) screenStreams.current[remoteId] = screen;
+    else delete screenStreams.current[remoteId];
+
+    const relayedScreensNow = new Map<number, MediaStream>();
+    for (const [streamId, userId] of Object.entries(screenRelays)) {
+      const stream = map.get(streamId);
+      if (stream) relayedScreensNow.set(userId, stream);
+    }
+    const prevScreens = relayedScreenUsers.current.get(remoteId) ?? new Set<number>();
+    relayedScreenUsers.current.set(remoteId, new Set(relayedScreensNow.keys()));
 
     const relayedNow = new Map<number, MediaStream>();
     for (const [streamId, userId] of Object.entries(relays)) {
@@ -264,11 +335,30 @@ export function useLiveEngine(params: {
       return next;
     });
     setRemoteScreens((prev) => {
-      if (screen) return prev[remoteId] === screen ? prev : { ...prev, [remoteId]: screen };
-      if (!(remoteId in prev)) return prev;
       const next = { ...prev };
-      delete next[remoteId];
-      return next;
+      let changed = false;
+      if (screen) {
+        if (next[remoteId] !== screen) {
+          next[remoteId] = screen;
+          changed = true;
+        }
+      } else if (remoteId in next) {
+        delete next[remoteId];
+        changed = true;
+      }
+      for (const uid of prevScreens) {
+        if (!relayedScreensNow.has(uid) && uid in next) {
+          delete next[uid];
+          changed = true;
+        }
+      }
+      for (const [uid, stream] of relayedScreensNow) {
+        if (next[uid] !== stream) {
+          next[uid] = stream;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
     });
 
     if (paramsRef.current.isHost) syncRelays();
@@ -354,6 +444,24 @@ export function useLiveEngine(params: {
     screenMeta.current.delete(remoteId);
     screenSenders.current.delete(remoteId);
     delete camStreams.current[remoteId];
+    delete screenStreams.current[remoteId];
+    for (const [key, senders] of Array.from(screenRelaySenders.current)) {
+      const [toS, fromS] = key.split(":");
+      if (Number(toS) !== remoteId && Number(fromS) !== remoteId) continue;
+      screenRelaySenders.current.delete(key);
+      const toCtx = peers.current.get(Number(toS));
+      if (toCtx && Number(toS) !== remoteId) {
+        for (const sender of senders) {
+          try {
+            toCtx.pc.removeTrack(sender);
+          } catch {
+            /* noop */
+          }
+        }
+        sendMeta(Number(toS));
+      }
+    }
+    relayedScreenUsers.current.delete(remoteId);
     for (const [key, senders] of Array.from(relaySenders.current)) {
       const [toS, fromS] = key.split(":");
       if (Number(toS) !== remoteId && Number(fromS) !== remoteId) continue;
@@ -497,8 +605,16 @@ export function useLiveEngine(params: {
       if (!remoteSid.current.has(from)) return;
       if (kind === "meta") {
         try {
-          const meta = JSON.parse(body) as { screenId?: string | null; relays?: Record<string, number> };
-          screenMeta.current.set(from, { screenId: meta.screenId ?? null, relays: meta.relays ?? {} });
+          const meta = JSON.parse(body) as {
+            screenId?: string | null;
+            relays?: Record<string, number>;
+            screenRelays?: Record<string, number>;
+          };
+          screenMeta.current.set(from, {
+            screenId: meta.screenId ?? null,
+            relays: meta.relays ?? {},
+            screenRelays: meta.screenRelays ?? {},
+          });
           publishRemote(from);
         } catch {
           /* noop */

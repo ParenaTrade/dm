@@ -5,13 +5,13 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Berkbey — Canlı Yayın Stüdyosu",
-  description: "Yayıncı, konuk ve izleyici olarak katıl. WebRTC canlı yayın + moderatörlü sohbet.",
+  description: "Yayıncı stüdyosu: yalnızca yayıncı girişiyle açılır.",
 };
 
 export default function CanliPage() {
   return (
     <main className="min-h-screen">
-      <LiveStudio />
+      <LiveStudio mode="studio" />
     </main>
   );
 }

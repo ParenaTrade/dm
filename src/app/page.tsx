@@ -68,7 +68,7 @@ export default async function HomePage() {
 
           <nav className="hidden items-center gap-6 text-sm text-white/70 lg:flex">
             <Link className="transition hover:text-gold" href="/">Ana Sayfa</Link>
-            <Link className="transition hover:text-gold" href="/canli">Canlı Yayın</Link>
+            <Link className="transition hover:text-gold" href="/izle">Canlı Yayın</Link>
             <a className="transition hover:text-gold" href="#program">Program</a>
             <a className="transition hover:text-gold" href="#cekilis">Çekilişler</a>
             <Link className="transition hover:text-gold" href="/panel">Moderatör Paneli</Link>
@@ -76,7 +76,7 @@ export default async function HomePage() {
           </nav>
 
           <Link
-            href="/canli"
+            href="/izle"
             className="btn-gold flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold"
           >
             <span className={isLive ? "live-dot inline-block h-2 w-2 rounded-full bg-red-600" : "inline-block h-2 w-2 rounded-full bg-red-900"} />
@@ -112,7 +112,7 @@ export default async function HomePage() {
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link href="/canli" className="btn-gold rounded-full px-7 py-3.5 text-base font-bold">
+              <Link href="/izle" className="btn-gold rounded-full px-7 py-3.5 text-base font-bold">
                 ▶ Stüdyoya Gir
               </Link>
               <a href="#program" className="btn-ghost rounded-full px-7 py-3.5 text-base font-semibold text-white/85">
@@ -164,7 +164,7 @@ export default async function HomePage() {
             </p>
 
             <Link
-              href="/canli"
+              href="/izle"
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 py-3 text-sm font-semibold transition hover:bg-white/20"
             >
               Yayını izle / konuk ol →
@@ -191,7 +191,7 @@ export default async function HomePage() {
             )}
           </p>
           <div className="flex gap-2">
-            <Link href="/canli" className="btn-gold rounded-full px-5 py-2 text-xs font-bold">
+            <Link href="/izle" className="btn-gold rounded-full px-5 py-2 text-xs font-bold">
               Yayına Katıl
             </Link>
             <Link href="/panel" className="btn-ghost rounded-full px-5 py-2 text-xs font-semibold text-white/80">
@@ -268,7 +268,7 @@ export default async function HomePage() {
             <h2 className="font-display text-4xl">Yayın Programı</h2>
             <p className="mt-2 text-white/60">Haftanın hangi günü neredeyiz?</p>
           </div>
-          <Link href="/canli" className="btn-ghost rounded-full px-5 py-2.5 text-sm font-semibold">
+          <Link href="/izle" className="btn-ghost rounded-full px-5 py-2.5 text-sm font-semibold">
             Hatırlatıcı kur →
           </Link>
         </div>
@@ -345,7 +345,7 @@ export default async function HomePage() {
               Stüdyoya gir, adını yaz, sohbete katıl.
             </p>
             <div className="mt-7 flex flex-wrap justify-center gap-3">
-              <Link href="/canli" className="btn-gold rounded-full px-7 py-3 font-bold">
+              <Link href="/izle" className="btn-gold rounded-full px-7 py-3 font-bold">
                 Canlı Yayına Katıl
               </Link>
               <Link href="/panel" className="btn-ghost rounded-full px-7 py-3 font-semibold text-white/85">

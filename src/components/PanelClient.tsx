@@ -153,8 +153,11 @@ export function PanelClient() {
           <p className="text-sm text-white/55">Kadro yönetimi, kullanıcı denetimi ve olay kaydı</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/canli" className="btn-gold rounded-full px-5 py-2.5 text-sm font-bold">
-            ▶ Stüdyoya Git
+          <Link
+            href={isHost ? "/canli" : "/panel/yayin"}
+            className="btn-gold rounded-full px-5 py-2.5 text-sm font-bold"
+          >
+            {isHost ? "▶ Stüdyoya Git" : "🎥 Canlı Yayın Kontrolü"}
           </Link>
           <Link href="/" className="btn-ghost rounded-full px-5 py-2.5 text-sm">
             Ana Sayfa

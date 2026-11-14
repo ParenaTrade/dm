@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatPanel } from "./ChatPanel";
 import { VideoTile } from "./VideoTile";
@@ -31,7 +32,12 @@ type Settings = {
 
 const CATEGORIES = ["Sohbet", "Spor", "Maç Yorumu", "Oyun", "Eğlence", "Konuk Programı", "Çekiliş"];
 
-export function LiveStudio() {
+export type StudioMode = "studio" | "moderator" | "viewer";
+
+const homeFor = (role: string) => (role === "host" ? "/canli" : role === "moderator" ? "/panel/yayin" : "/izle");
+
+export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
+  const router = useRouter();
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
   const [roomOpen, setRoomOpen] = useState(false);
@@ -74,13 +80,20 @@ export function LiveStudio() {
   const isHost = user?.role === "host";
   const isStaff = isHost || user?.role === "moderator";
 
+  // Rol bazlı sayfalar: stüdyo yalnız yayıncı, moderatör kendi panelinde, izleyici kendi sayfasında.
+  const expectedRole = mode === "studio" ? "host" : mode === "moderator" ? "moderator" : "viewer";
+  const wrongPlace = Boolean(user) && user!.role !== expectedRole;
+  useEffect(() => {
+    if (user && wrongPlace) router.replace(homeFor(user.role));
+  }, [user, wrongPlace, router]);
+
   const realtimeLive = rtStatus === "live";
 
   const engine = useLiveEngine({
     streamId: stream?.id ?? null,
     userId: user?.id ?? null,
     isHost: Boolean(isHost),
-    active: Boolean(user),
+    active: Boolean(user) && !wrongPlace,
     realtimeMode: false, // WebRTC sinyalleri güvenilir REST kuyruğundan; anlık durum için Realtime 'state' olayı
   });
 
@@ -720,15 +733,44 @@ export function LiveStudio() {
     );
   }
 
+  if (user && wrongPlace) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <div className="glass neon-ring w-full max-w-md rounded-3xl p-7 text-center">
+          <p className="font-display gold-text text-3xl">
+            {mode === "studio" ? "Yayıncı Stüdyosu" : mode === "moderator" ? "Moderatör Paneli" : "İzleyici Alanı"}
+          </p>
+          <p className="mt-3 text-sm text-white/65">
+            {mode === "studio"
+              ? "Stüdyoya yalnızca yayıncı girebilir."
+              : mode === "moderator"
+                ? "Bu alan yalnızca moderatörlere açık."
+                : "Bu alan izleyicilere açık."}{" "}
+            Kendi alanına yönlendiriliyorsun...
+          </p>
+          <Link href={homeFor(user.role)} className="btn-gold mt-5 inline-block rounded-full px-6 py-2.5 text-sm font-bold">
+            Kendi alanıma git
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     const roomLive = stream?.status === "live";
     return (
       <div className="flex min-h-screen items-center justify-center px-4 py-16">
         <div className="glass neon-ring w-full max-w-md rounded-3xl p-7">
-          <p className="font-display gold-text text-3xl">Stüdyoya Gir</p>
+          <p className="font-display gold-text text-3xl">
+            {mode === "studio" ? "Yayıncı Girişi" : mode === "moderator" ? "Moderatör Girişi" : "Yayına Katıl"}
+          </p>
           <p className="mt-2 text-sm text-white/60">
-            Yayıncı, moderatör, konuk ve izleyici girişi e-posta ve şifre ile yapılır. Aşağıdaki canlı yayın odasına
-            tıklayarak giriş yap veya kayıt ol.
+            {mode === "studio"
+              ? "Stüdyo yalnızca yayıncı hesabıyla açılır. Giriş yapmadan yayın başlatılamaz."
+              : mode === "moderator"
+                ? "Moderatör hesabınla giriş yap; sponsor seçimi, ekran paylaşımı ve sohbet yönetimi burada."
+                : "İzlemek ve sohbete katılmak için e-posta ve şifre ile giriş yap veya kayıt ol."}{" "}
+            Aşağıdaki canlı yayın odasına tıklayarak devam et.
           </p>
 
           <button
@@ -948,15 +990,20 @@ export function LiveStudio() {
             );
 
             const sources: Partial<Record<"screen" | "mod" | "host", Src>> = {};
-            const screenStream = isHost ? engine.screenStream : hostP ? (engine.remoteScreens[hostP.userId] ?? null) : null;
+            const ownScreen = engine.screenStream;
+            const hostScreen = hostP && !isHost ? (engine.remoteScreens[hostP.userId] ?? null) : null;
+            const relayedModScreen =
+              Object.entries(engine.remoteScreens).find(([uid]) => Number(uid) !== user.id && Number(uid) !== hostP?.userId)?.[1] ??
+              null;
+            const screenStream = isHost ? (ownScreen ?? relayedModScreen) : (hostScreen ?? ownScreen ?? relayedModScreen);
             if (screenStream) {
               sources.screen = {
                 stream: screenStream,
-                label: "🎮 Canlı Ekran (oyun / maç)",
+                label: screenStream === relayedModScreen ? "🎮 Moderatör Ekranı" : "🎮 Canlı Ekran (oyun / maç)",
                 fit: "contain",
                 showVideo: true,
                 mirror: false,
-                muted: isHost,
+                muted: screenStream === ownScreen,
                 fallback: <span className="text-sm">Ekran yükleniyor...</span>,
               };
             }
@@ -1058,7 +1105,7 @@ export function LiveStudio() {
                       >
                         {list.map((k) => {
                           const src = sources[k]!;
-                          const square = k === "mod";
+                          const square = k === "mod" || k === "host";
                           return (
                             <StageVideo
                               key={k}
@@ -1222,7 +1269,7 @@ export function LiveStudio() {
             </button>
           )}
 
-          {isHost && (
+          {(isHost || isMod) && (
             <>
               <select
                 value={sponsorId}
@@ -1284,7 +1331,7 @@ export function LiveStudio() {
             </div>
           )}
 
-          {isHost && (
+          {(isHost || isMod) && (
             <button
               onClick={() => void (engine.screenStream ? engine.stopScreen() : engine.startScreen())}
               className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${engine.screenStream ? "text-emerald-300" : ""}`}
