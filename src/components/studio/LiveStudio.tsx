@@ -603,45 +603,56 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
     }
   };
 
-  // Sponsor / oyun siteleri (yayıncının tarayıcısında saklanır)
-  type Sponsor = { id: string; name: string; url: string };
+  // Sponsor / oyun siteleri: yalnızca yayıncı (admin) ekler/siler, moderatör listeden seçer
+  type Sponsor = { id: number; name: string; url: string };
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
   const [sponsorId, setSponsorId] = useState("");
   const [sponsorOpen, setSponsorOpen] = useState(false);
   const [sponsorName, setSponsorName] = useState("");
   const [sponsorUrl, setSponsorUrl] = useState("");
+  const [sponsorError, setSponsorError] = useState<string | null>(null);
   const [studioHint, setStudioHint] = useState<string | null>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
+  const loadSponsors = useCallback(async () => {
     try {
-      const raw = localStorage.getItem("berkbey.sponsors");
-      if (raw) setSponsors(JSON.parse(raw) as Sponsor[]);
+      const res = await fetch("/api/sponsors", { cache: "no-store" });
+      const data = await res.json();
+      if (data.ok) setSponsors(data.sponsors as Sponsor[]);
     } catch {
       /* noop */
     }
   }, []);
-  const saveSponsors = (next: Sponsor[]) => {
-    setSponsors(next);
-    try {
-      localStorage.setItem("berkbey.sponsors", JSON.stringify(next));
-    } catch {
-      /* noop */
+  useEffect(() => {
+    if (!user || !isStaff || wrongPlace) return;
+    void loadSponsors();
+    const timer = setInterval(() => void loadSponsors(), 20000); // admin yeni sponsor ekleyince moderatörde de görünsün
+    return () => clearInterval(timer);
+  }, [user, isStaff, wrongPlace, loadSponsors]);
+  const addSponsor = async () => {
+    setSponsorError(null);
+    const res = await fetch("/api/sponsors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: sponsorName, url: sponsorUrl }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok) {
+      setSponsorError(data.error ?? "Eklenemedi");
+      return;
     }
-  };
-  const addSponsor = () => {
-    const name = sponsorName.trim();
-    let url = sponsorUrl.trim();
-    if (!name || !url) return;
-    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-    const item = { id: `${Date.now()}`, name, url };
-    saveSponsors([...sponsors, item]);
-    setSponsorId(item.id);
     setSponsorName("");
     setSponsorUrl("");
+    setSponsorId(String(data.sponsor.id));
+    await loadSponsors();
+  };
+  const removeSponsor = async (id: number) => {
+    await fetch(`/api/sponsors?id=${id}`, { method: "DELETE" });
+    if (sponsorId === String(id)) setSponsorId("");
+    await loadSponsors();
   };
   /** Seçili sponsor sitesini yeni sekmede aç + ekran paylaşımını başlat (o sekmeyi seç). */
   const goLiveWithSponsor = () => {
-    const sp = sponsors.find((x) => x.id === sponsorId);
+    const sp = sponsors.find((x) => String(x.id) === sponsorId);
     if (!sp) return;
     window.open(sp.url, "_blank", "noopener");
     setStudioHint(`"${sp.name}" yeni sekmede açıldı. Açılan pencerede O SEKMEYİ seç ve "Sekme sesini paylaş"ı işaretle.`);
@@ -1279,7 +1290,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
               >
                 <option value="">🎰 Sponsor / Oyun sitesi seç…</option>
                 {sponsors.map((x) => (
-                  <option key={x.id} value={x.id}>
+                  <option key={x.id} value={String(x.id)}>
                     {x.name}
                   </option>
                 ))}
@@ -1291,9 +1302,11 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
               >
                 ▶ Siteyi Yayına Al
               </button>
-              <button onClick={() => setSponsorOpen(true)} className="btn-ghost rounded-xl px-4 py-2.5 text-sm">
-                ⚙ Sponsorlar
-              </button>
+              {isHost && (
+                <button onClick={() => setSponsorOpen(true)} className="btn-ghost rounded-xl px-4 py-2.5 text-sm">
+                  ⚙ Sponsorları Yönet
+                </button>
+              )}
               <input
                 ref={mediaInputRef}
                 type="file"
@@ -1379,11 +1392,11 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
           </div>
         )}
 
-        {sponsorOpen && (
+        {isHost && sponsorOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
             <div className="glass neon-ring w-full max-w-md rounded-3xl p-6">
               <p className="font-display text-2xl text-gold">Sponsorlar / Oyun siteleri</p>
-              <p className="mt-1 text-xs text-white/50">Liste bu tarayıcıda saklanır. Seçince site yeni sekmede açılır ve ekran paylaşımı başlar.</p>
+              <p className="mt-1 text-xs text-white/50">Eklediklerin moderatörlerde de görünür; moderatörler sadece seçip yayına alır.</p>
               <div className="mt-4 max-h-48 space-y-2 overflow-y-auto">
                 {sponsors.length === 0 && <p className="text-sm text-white/40">Henüz sponsor yok.</p>}
                 {sponsors.map((x) => (
@@ -1393,10 +1406,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                       <p className="truncate text-xs text-white/40">{x.url}</p>
                     </div>
                     <button
-                      onClick={() => {
-                        saveSponsors(sponsors.filter((y) => y.id !== x.id));
-                        if (sponsorId === x.id) setSponsorId("");
-                      }}
+                      onClick={() => void removeSponsor(x.id)}
                       className="rounded-lg bg-red-500/25 px-2 py-1 text-xs text-red-200 hover:bg-red-500/45"
                     >
                       Sil
@@ -1418,11 +1428,12 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                   className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm outline-none"
                 />
               </div>
+              {sponsorError && <p className="mt-2 text-sm text-red-300">{sponsorError}</p>}
               <div className="mt-4 flex justify-end gap-2">
                 <button onClick={() => setSponsorOpen(false)} className="btn-ghost rounded-xl px-4 py-2 text-sm">
                   Kapat
                 </button>
-                <button onClick={addSponsor} className="rounded-xl bg-gold px-4 py-2 text-sm font-bold text-black">
+                <button onClick={() => void addSponsor()} className="rounded-xl bg-gold px-4 py-2 text-sm font-bold text-black">
                   Ekle
                 </button>
               </div>

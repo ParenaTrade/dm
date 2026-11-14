@@ -212,3 +212,12 @@ create policy "public read participants" on public.stream_participants
 
 -- Yazar işlemleri sunucu tarafı (postgres rolü) üzerinden yapılır; anon için
 -- insert/update/delete politikası vermiyoruz.
+
+
+-- Sponsorlar / oyun siteleri (yalnızca admin ekler)
+create table if not exists public.sponsors (
+  id serial primary key,
+  name text not null,
+  url text not null,
+  created_at timestamptz not null default now()
+);

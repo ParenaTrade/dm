@@ -131,6 +131,12 @@ const DDL = [
     created_at timestamptz NOT NULL DEFAULT now()
   )`,
   sql`CREATE INDEX IF NOT EXISTS activity_log_created_idx ON activity_log (created_at DESC)`,
+  sql`CREATE TABLE IF NOT EXISTS sponsors (
+    id serial PRIMARY KEY,
+    name text NOT NULL,
+    url text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
 ];
 
 let bootstrapPromise: Promise<void> | null = null;

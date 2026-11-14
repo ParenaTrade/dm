@@ -167,3 +167,11 @@ export const activityLog = pgTable("activity_log", {
   target: text("target").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Sponsorlar / oyun siteleri: yalnızca yayıncı (admin) ekler, moderatör seçip yayına alır */
+export const sponsors = pgTable("sponsors", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
