@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatPanel } from "./ChatPanel";
-import { SelfPip } from "./SelfPip";
 import { StageVideo } from "./StageVideo";
 import { AudioSink } from "./AudioSink";
 import { SystemStatusButton } from "../SystemStatusButton";
@@ -839,7 +838,6 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
 
   const hostP = participants.find((p) => p.role === "host" && p.status === "live");
   const canPublish = isHost || isMod || onStageGuest;
-  const showPip = !isHost && onStageGuest;
 
   return (
     <div className="mx-auto grid max-w-[1560px] gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_390px] lg:p-5">
@@ -1210,19 +1208,6 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                       </button>
                     ))}
                   </div>
-                )}
-
-                {showPip && (
-                  <SelfPip
-                    stream={engine.localStream}
-                    label={user.nickname}
-                    camOn={camOn}
-                    micOn={micOn}
-                    mediaOff={engine.mediaKind === "off"}
-                    onToggleCam={toggleCam}
-                    onToggleMic={toggleMic}
-                    onStart={toggleCam}
-                  />
                 )}
 
                 {/* Büyük gösterim: ortada popup, X ile listeye dön */}
