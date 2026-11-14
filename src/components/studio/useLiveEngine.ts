@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sendBroadcast } from "@/lib/realtime-client";
+import { MIC_CONSTRAINTS, cleanMicStream } from "@/lib/audio-cleanup";
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
@@ -72,6 +73,7 @@ export function useLiveEngine(params: {
   const flushing = useRef(false);
   const localStreamRef = useRef<MediaStream | null>(null);
   const silentTrack = useRef<MediaStreamTrack | null>(null);
+  const micCleanup = useRef<(() => void) | null>(null);
   const localScreenRef = useRef<MediaStream | null>(null);
   const screenSenders = useRef(new Map<number, RTCRtpSender[]>());
   const incoming = useRef(new Map<number, Map<string, MediaStream>>());
@@ -540,6 +542,8 @@ export function useLiveEngine(params: {
       setError(null);
       try {
         if (kind === "off") {
+          micCleanup.current?.();
+          micCleanup.current = null;
           localStreamRef.current?.getTracks().forEach((track) => track.stop());
           localStreamRef.current = null;
           setLocalStream(null);
@@ -548,14 +552,19 @@ export function useLiveEngine(params: {
           return;
         }
 
-        const stream = await navigator.mediaDevices.getUserMedia({
+        const raw = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          audio: MIC_CONSTRAINTS,
         });
+        // Mikrofon sesini otomatik temizle (gürültü kapısı, filtre, kompresör)
+        const cleaned = await cleanMicStream(raw);
+        const stream = cleaned.stream;
         if (opts?.muted) stream.getAudioTracks().forEach((t) => (t.enabled = false));
         if (opts?.videoOff) stream.getVideoTracks().forEach((t) => (t.enabled = false));
 
+        micCleanup.current?.();
         localStreamRef.current?.getTracks().forEach((track) => track.stop());
+        micCleanup.current = cleaned.dispose;
         localStreamRef.current = stream;
         setLocalStream(stream);
         setMediaKind("camera");
@@ -633,6 +642,8 @@ export function useLiveEngine(params: {
         }
       }
       peers.current.clear();
+      micCleanup.current?.();
+      micCleanup.current = null;
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
       localScreenRef.current?.getTracks().forEach((track) => track.stop());
       silentTrack.current?.stop();

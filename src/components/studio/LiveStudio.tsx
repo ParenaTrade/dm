@@ -819,7 +819,7 @@ export function LiveStudio() {
           </div>
         )}
 
-        {/* STAGE: ana ekran = oyun/maç/ekran yayını; yayıncı yüzü sol üstte küçük popup (çift tıkla: ekranı doldurur) */}
+        {/* STAGE: ana ekran = oyun/maç/ekran yayını; yayıncı yüzü sol üstte, moderatör sağ üstte kare popup (çift tıkla: ekranı doldurur) */}
         <div className="rounded-3xl border border-white/10 bg-black/40 p-3">
           {(() => {
             const live = stream?.status === "live";
@@ -917,33 +917,60 @@ export function LiveStudio() {
                   </span>
                 </StageVideo>
 
-                {popups.length > 0 && (
+                {popups.some((k) => k !== "mod") && (
                   <div className="absolute left-3 top-3 z-10 flex flex-col gap-2">
-                    {popups.map((k) => {
-                      const src = sources[k]!;
-                      return (
-                        <StageVideo
-                          key={k}
-                          stream={src.stream}
-                          muted={src.muted}
-                          mirror={src.mirror}
-                          fit={src.fit}
-                          showVideo={src.showVideo}
-                          fallback={src.fallback}
-                          onDoubleClick={isStaff ? () => void setFocus(k) : undefined}
-                          className="aspect-video w-32 rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60 sm:w-52"
-                        >
-                          <span className="pointer-events-none absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
-                            {src.label}
-                          </span>
-                          {isStaff && (
-                            <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white/70">
-                              çift tıkla
+                    {popups
+                      .filter((k) => k !== "mod")
+                      .map((k) => {
+                        const src = sources[k]!;
+                        return (
+                          <StageVideo
+                            key={k}
+                            stream={src.stream}
+                            muted={src.muted}
+                            mirror={src.mirror}
+                            fit={src.fit}
+                            showVideo={src.showVideo}
+                            fallback={src.fallback}
+                            onDoubleClick={isStaff ? () => void setFocus(k) : undefined}
+                            className="aspect-video w-32 rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60 sm:w-52"
+                          >
+                            <span className="pointer-events-none absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
+                              {src.label}
                             </span>
-                          )}
-                        </StageVideo>
-                      );
-                    })}
+                            {isStaff && (
+                              <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white/70">
+                                çift tıkla
+                              </span>
+                            )}
+                          </StageVideo>
+                        );
+                      })}
+                  </div>
+                )}
+
+                {/* Moderatör kamerası: sağ üstte KARE */}
+                {popups.includes("mod") && sources.mod && (
+                  <div className="absolute right-3 top-3 z-10">
+                    <StageVideo
+                      stream={sources.mod.stream}
+                      muted={sources.mod.muted}
+                      mirror={sources.mod.mirror}
+                      fit="cover"
+                      showVideo={sources.mod.showVideo}
+                      fallback={sources.mod.fallback}
+                      onDoubleClick={isStaff ? () => void setFocus("mod") : undefined}
+                      className="aspect-square w-24 rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60 sm:w-40"
+                    >
+                      <span className="pointer-events-none absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
+                        {sources.mod.label}
+                      </span>
+                      {isStaff && (
+                        <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white/70">
+                          çift tıkla
+                        </span>
+                      )}
+                    </StageVideo>
                   </div>
                 )}
 
