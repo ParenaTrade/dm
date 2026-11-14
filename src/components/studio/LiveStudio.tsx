@@ -539,6 +539,57 @@ export function LiveStudio() {
   const [listenPref, setListenPref] = useState<boolean | null>(null);
   const listenOff = listenPref ?? isMod;
 
+  // Canlı ekran tam ekran (tarayıcı Fullscreen API; desteklemeyen telefonlarda CSS tam ekran)
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [apiFs, setApiFs] = useState(false);
+  const [cssFs, setCssFs] = useState(false);
+  const fsActive = apiFs || cssFs;
+  useEffect(() => {
+    const onChange = () => {
+      const d = document as Document & { webkitFullscreenElement?: Element | null };
+      setApiFs(Boolean(d.fullscreenElement ?? d.webkitFullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+    };
+  }, []);
+  useEffect(() => {
+    if (!cssFs) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setCssFs(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cssFs]);
+  const toggleFullscreen = async () => {
+    const d = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+    if (cssFs) {
+      setCssFs(false);
+      return;
+    }
+    if (d.fullscreenElement ?? d.webkitFullscreenElement) {
+      try {
+        await (d.exitFullscreen?.() ?? d.webkitExitFullscreen?.());
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+    const el = stageRef.current as (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> | void }) | null;
+    if (!el) return;
+    try {
+      if (el.requestFullscreen) await el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+      else setCssFs(true);
+    } catch {
+      setCssFs(true);
+    }
+  };
+
   /* Moderatör (yayını sunan kişi) canlı yayın varken kamerasını otomatik açar (mikrofon kapalı başlar).
      Sahneye alınan konuk kamerasını açar (yüzünü göstermek istemiyorsa kapalı kalır).
      Yenilemeden sonra yayıncı kamerası kendiliğinden geri gelir. */
@@ -824,7 +875,7 @@ export function LiveStudio() {
           </div>
         )}
 
-        {/* STAGE: ana ekran = oyun/maç/ekran yayını; yayıncı yüzü sol üstte, moderatör solda kare popup (popup'a tek tık: gizle, canlı ekrana tek tık: göster) */}
+        {/* STAGE: ana ekran = oyun/maç/ekran yayını; yayıncı yüzü sol üstte, moderatör sağ üstte kare popup (popup'a tek tık: gizle, canlı ekrana tek tık: göster) */}
         <div className="rounded-3xl border border-white/10 bg-black/40 p-3">
           {(() => {
             const live = stream?.status === "live";
@@ -906,7 +957,12 @@ export function LiveStudio() {
             const main = sources[focus];
 
             return (
-              <div className="relative">
+              <div
+                ref={stageRef}
+                className={`relative ${fsActive ? "bg-black" : ""} ${cssFs ? "fixed inset-0 z-[60] h-full w-full" : ""} ${
+                  apiFs ? "h-screen w-screen" : ""
+                }`}
+              >
                 <StageVideo
                   stream={main?.stream ?? null}
                   muted={main?.muted || listenOff}
@@ -916,53 +972,82 @@ export function LiveStudio() {
                   showVideo={main?.showVideo ?? false}
                   fallback={main?.fallback ?? <span className="text-sm">Yayıncı bağlanıyor...</span>}
                   onDoubleClick={isStaff && focus !== defaultFocus ? () => void setFocus(defaultFocus) : undefined}
-                  className="aspect-video rounded-2xl"
+                  className={fsActive ? "h-full w-full" : "aspect-video rounded-2xl"}
                 >
                   <span className="absolute bottom-3 left-3 rounded-lg bg-black/60 px-2.5 py-1 text-xs font-semibold">
                     {main?.label}
                   </span>
                 </StageVideo>
 
-                {/* Popup kameralar solda: moderatör KARE, diğerleri 16:9. Tek tık: gizle. */}
-                {!popupsHidden && popups.length > 0 && (
-                  <div className="absolute left-3 top-3 z-10 flex flex-col gap-2">
-                    {popups.map((k) => {
-                      const src = sources[k]!;
-                      const square = k === "mod";
-                      return (
-                        <StageVideo
-                          key={k}
-                          stream={src.stream}
-                          muted={src.muted || listenOff}
-                          mirror={src.mirror}
-                          fit={square ? "cover" : src.fit}
-                          showVideo={src.showVideo}
-                          fallback={src.fallback}
-                          onClick={() => setPopupsHidden(true)}
-                          className={`${
-                            square ? "aspect-square w-24 sm:w-36" : "aspect-video w-32 sm:w-52"
-                          } rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60`}
-                        >
-                          <span className="pointer-events-none absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
-                            {src.label}
-                          </span>
-                          {isStaff && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void setFocus(k);
-                              }}
-                              title="Ana ekranla yer değiştir (herkes için)"
-                              className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white/80 hover:bg-black/80"
+                {/* Tam ekran: sağ alt köşe */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void toggleFullscreen();
+                  }}
+                  title={fsActive ? "Normal ekrana dön" : "Tam ekran"}
+                  aria-label={fsActive ? "Normal ekrana dön" : "Tam ekran"}
+                  className="absolute bottom-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white/90 hover:bg-black/80"
+                >
+                  {fsActive ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* Popup kameralar: yayıncı/diğerleri solda (16:9), moderatör SAĞ ÜSTTE KARE. Popup'a tek tık: gizle. */}
+                {!popupsHidden &&
+                  (["left", "right"] as const).map((side) => {
+                    const list = popups.filter((k) => (side === "right" ? k === "mod" : k !== "mod"));
+                    if (list.length === 0) return null;
+                    return (
+                      <div
+                        key={side}
+                        className={`absolute top-3 z-10 flex flex-col gap-2 ${side === "right" ? "right-3" : "left-3"}`}
+                      >
+                        {list.map((k) => {
+                          const src = sources[k]!;
+                          const square = k === "mod";
+                          return (
+                            <StageVideo
+                              key={k}
+                              stream={src.stream}
+                              muted={src.muted || listenOff}
+                              mirror={src.mirror}
+                              fit={square ? "cover" : src.fit}
+                              showVideo={src.showVideo}
+                              fallback={src.fallback}
+                              onClick={() => setPopupsHidden(true)}
+                              className={`${
+                                square ? "aspect-square w-24 sm:w-36" : "aspect-video w-32 sm:w-52"
+                              } rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60`}
                             >
-                              ⇄
-                            </button>
-                          )}
-                        </StageVideo>
-                      );
-                    })}
-                  </div>
-                )}
+                              <span className="pointer-events-none absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
+                                {src.label}
+                              </span>
+                              {isStaff && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void setFocus(k);
+                                  }}
+                                  title="Ana ekranla yer değiştir (herkes için)"
+                                  className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white/80 hover:bg-black/80"
+                                >
+                                  ⇄
+                                </button>
+                              )}
+                            </StageVideo>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
 
                 {showPip && (
                   <SelfPip
