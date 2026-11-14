@@ -119,3 +119,23 @@ Admin paneli → **🖼 Görseller** sekmesinden logo, açılış arka planı, c
 **ekle / değiştir / sil** ile yönetilir. Dosyalar Supabase Storage `images` kovasındaki `site/` klasörüne yazılır
 (kova yoksa herkese açık olarak otomatik oluşturulur; farklı ad için `SUPABASE_IMAGES_BUCKET`).
 Gereken: Vercel'de `SUPABASE_SERVICE_ROLE_KEY`. Yükleme sınırı 4 MB (büyük fotoğraflar tarayıcıda otomatik küçültülür).
+
+## Bağlantı kopması / "bağlanmıyor" için TURN sunucusu (Cloudflare)
+
+STUN tek başına yetmez: telefon operatörü, kurumsal ağ veya sıkı NAT arkasındaki kullanıcılar
+(özellikle telefondan giren moderatör/konuk) yayıncıya doğrudan bağlanamaz.
+
+1. Cloudflare paneli > **Realtime** (eski adıyla Calls) > **TURN** > bir **TURN anahtarı** oluştur.
+   (Workers & Pages sayfası değil.) Sana bir **Key ID** ve **API Token** verir.
+2. Vercel > Settings > Environment Variables (gizli, `NEXT_PUBLIC_` ile BAŞLAMAZ):
+
+```
+TURN_KEY_ID=<anahtar kimliği>
+TURN_KEY_API_TOKEN=<anahtarın API token'ı>
+```
+
+3. Yeniden deploy et. Uygulama giriş yapmış her kullanıcı için `/api/turn` üzerinden kısa ömürlü
+   (24 saat) TURN şifresi alır; token tarayıcıya hiç gitmez.
+
+Alternatif (başka sağlayıcı, sabit şifreli): `NEXT_PUBLIC_TURN_URLS`, `NEXT_PUBLIC_TURN_USERNAME`,
+`NEXT_PUBLIC_TURN_CREDENTIAL` değişkenleri de desteklenir.

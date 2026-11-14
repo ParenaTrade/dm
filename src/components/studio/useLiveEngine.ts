@@ -4,10 +4,55 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { sendBroadcast } from "@/lib/realtime-client";
 import { MIC_CONSTRAINTS, cleanMicStream } from "@/lib/audio-cleanup";
 
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-  { urls: "stun:global.stun.twilio.com:3478" },
-];
+/**
+ * STUN tek başına yetmez: telefon operatörü / kurumsal ağ / simetrik NAT arkasındaki kullanıcı bağlanamaz
+ * ("bağlanmıyor", "gidip geliyor"). Bu yüzden TURN röle sunucusu tanımlanabilir:
+ *   NEXT_PUBLIC_TURN_URLS="turn:sunucu:3478,turns:sunucu:5349?transport=tcp"
+ *   NEXT_PUBLIC_TURN_USERNAME / NEXT_PUBLIC_TURN_CREDENTIAL
+ */
+const BASE_ICE_SERVERS: RTCIceServer[] = (() => {
+  const servers: RTCIceServer[] = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    { urls: "stun:global.stun.twilio.com:3478" },
+  ];
+  const urls = (process.env.NEXT_PUBLIC_TURN_URLS ?? "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+  if (urls.length) {
+    servers.push({
+      urls,
+      username: process.env.NEXT_PUBLIC_TURN_USERNAME ?? "",
+      credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL ?? "",
+    });
+  }
+  return servers;
+})();
+
+/** Sunucudan (Cloudflare TURN) alınan kısa ömürlü TURN bilgisi; tüm bağlantılar bunu kullanır. */
+let turnServers: RTCIceServer[] = [];
+let turnLoadedAt = 0;
+async function loadTurnServers(): Promise<boolean> {
+  if (turnServers.length && Date.now() - turnLoadedAt < 6 * 3600_000) return false;
+  try {
+    const res = await fetch("/api/turn", { cache: "no-store" });
+    const data = (await res.json()) as { ok?: boolean; iceServers?: RTCIceServer[] };
+    if (data.ok && data.iceServers?.length) {
+      turnServers = data.iceServers;
+      turnLoadedAt = Date.now();
+      return true;
+    }
+  } catch {
+    /* STUN ile devam */
+  }
+  return false;
+}
+const currentIceServers = (): RTCIceServer[] => [...BASE_ICE_SERVERS, ...turnServers];
+
+/** Gönderim kalitesi sınırları: yayıncının yükleme hızını aşmasın (donma/kopmanın ana sebebi). */
+const CAM_MAX_BITRATE = 1_000_000;
+const RELAY_MAX_BITRATE = 700_000;
+const SCREEN_MAX_BITRATE = 2_200_000;
 
 type PeerCtx = {
   remoteId: number;
@@ -23,6 +68,9 @@ type PeerCtx = {
   videoSender: RTCRtpSender | null;
   createdAt: number;
   disconnectedAt: number | null;
+  helloBody: string;
+  lastHelloAt: number;
+  restartTimer: ReturnType<typeof setTimeout> | null;
 };
 
 type Outgoing = { to: number | null; kind: string; body: string };
@@ -94,6 +142,7 @@ export function useLiveEngine(params: {
   const helloSeq = useRef(0);
   const remoteSid = useRef(new Map<number, string>());
   const greeted = useRef<number | null>(null);
+  const lastGreetAt = useRef(0);
   const camStreams = useRef<Record<number, MediaStream>>({});
   const relayedUsers = useRef(new Map<number, Set<number>>());
   const relaySources = useRef<Set<number>>(new Set());
@@ -117,17 +166,40 @@ export function useLiveEngine(params: {
           sendBroadcast({ type: "signal", from: paramsRef.current.userId ?? 0, ...item });
         }
       } else {
-        await fetch("/api/stream/signals", {
+        const res = await fetch("/api/stream/signals", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ items: batch }),
           keepalive: true,
         });
+        if (!res.ok) throw new Error(`signal http ${res.status}`);
       }
     } catch {
       outbox.current.unshift(...batch);
     } finally {
       flushing.current = false;
+    }
+  }, []);
+
+  /** Video gönderim hızını sınırla (bağlantı kalitesine göre otomatik çözünürlük düşürmeye izin ver). */
+  const applyQuality = useCallback((ctx: PeerCtx) => {
+    const screenSet = new Set(screenSenders.current.get(ctx.remoteId) ?? []);
+    for (const sender of ctx.pc.getSenders()) {
+      if (sender.track?.kind !== "video") continue;
+      const max = sender === ctx.videoSender ? CAM_MAX_BITRATE : screenSet.has(sender) ? SCREEN_MAX_BITRATE : RELAY_MAX_BITRATE;
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+        const enc = params.encodings[0];
+        if (enc.maxBitrate === max) continue;
+        enc.maxBitrate = max;
+        enc.maxFramerate = sender === ctx.videoSender ? 30 : 30;
+        (params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference =
+          "maintain-framerate";
+        void sender.setParameters(params).catch(() => undefined);
+      } catch {
+        /* henüz müzakere edilmedi: bağlanınca tekrar denenecek */
+      }
     }
   }, []);
 
@@ -380,7 +452,7 @@ export function useLiveEngine(params: {
       const existing = peers.current.get(remoteId);
       if (existing) return existing;
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, bundlePolicy: "max-bundle" });
+      const pc = new RTCPeerConnection({ iceServers: currentIceServers(), bundlePolicy: "max-bundle", iceCandidatePoolSize: 4 });
       const ctx: PeerCtx = {
         remoteId,
         pc,
@@ -394,6 +466,9 @@ export function useLiveEngine(params: {
         videoSender: null,
         createdAt: Date.now(),
         disconnectedAt: null,
+        helloBody: "",
+        lastHelloAt: 0,
+        restartTimer: null,
       };
 
       pc.onicecandidate = (event) => {
@@ -429,9 +504,25 @@ export function useLiveEngine(params: {
       pc.onconnectionstatechange = () => {
         setPeerStates((prev) => ({ ...prev, [remoteId]: pc.connectionState }));
         ctx.disconnectedAt = pc.connectionState === "disconnected" ? (ctx.disconnectedAt ?? Date.now()) : null;
+        const withRestart = pc as RTCPeerConnection & { restartIce?: () => void };
+        if (ctx.restartTimer) {
+          clearTimeout(ctx.restartTimer);
+          ctx.restartTimer = null;
+        }
         if (pc.connectionState === "failed") {
-          const withRestart = pc as RTCPeerConnection & { restartIce?: () => void };
           withRestart.restartIce?.();
+        } else if (pc.connectionState === "disconnected") {
+          // Kısa kopmalarda 2.5 sn içinde kendiliğinden toparlanmazsa ICE'ı yenile (görüntü takılmasını bitirir)
+          ctx.restartTimer = setTimeout(() => {
+            if (pc.connectionState === "disconnected") withRestart.restartIce?.();
+          }, 2500);
+        } else if (pc.connectionState === "connected") {
+          applyQuality(ctx);
+        }
+      };
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === "failed") {
+          (pc as RTCPeerConnection & { restartIce?: () => void }).restartIce?.();
         }
       };
 
@@ -439,22 +530,28 @@ export function useLiveEngine(params: {
       // Yayıncı her yeni bağlantıda BENZERSİZ bir hello kimliği yollar: karşı taraf eski (bayat)
       // bağlantısını bırakıp temiz başlar. (Konuk bekleme→sahne geçişinde eski bağlantı takılı kalıyordu.)
       const helloBody = paramsRef.current.isHost ? `${sid.current}.${++helloSeq.current}` : sid.current;
+      ctx.helloBody = helloBody;
+      ctx.lastHelloAt = Date.now();
       queue({ to: remoteId, kind: "hello", body: helloBody });
       attachLocalTracks(ctx);
       if (localScreenRef.current) attachScreen(ctx);
       if (paramsRef.current.isHost) syncRelays();
+      applyQuality(ctx);
       return ctx;
     },
-    [attachLocalTracks, attachScreen, publishRemote, queue, syncRelays],
+    [applyQuality, attachLocalTracks, attachScreen, publishRemote, queue, syncRelays],
   );
 
   const closePeer = useCallback((remoteId: number, notify = false) => {
     const ctx = peers.current.get(remoteId);
     if (!ctx) return;
     if (notify) queue({ to: remoteId, kind: "bye", body: "" });
+    if (ctx.restartTimer) clearTimeout(ctx.restartTimer);
     ctx.pc.onicecandidate = null;
     ctx.pc.ontrack = null;
     ctx.pc.onnegotiationneeded = null;
+    ctx.pc.onconnectionstatechange = null;
+    ctx.pc.oniceconnectionstatechange = null;
     try {
       ctx.pc.close();
     } catch {
@@ -583,11 +680,17 @@ export function useLiveEngine(params: {
         if (!match || !connectable(match.status)) continue;
         const st = ctx.pc.connectionState;
         const isStage = match.role === "guest" || match.role === "moderator";
+        // Kaybolmuş "hello" yüzünden karşı taraf sinyalleri yok sayıyor olabilir: bağlanana kadar tekrar gönder
+        if (st !== "connected" && now - ctx.lastHelloAt > 4000 && ctx.helloBody) {
+          ctx.lastHelloAt = now;
+          queue({ to: key, kind: "hello", body: ctx.helloBody });
+        }
         const dead =
           st === "failed" ||
           st === "closed" ||
           (st === "disconnected" && ctx.disconnectedAt !== null && now - ctx.disconnectedAt > 8000) ||
-          (isHost && isStage && st !== "connected" && now - ctx.createdAt > 20000);
+          // Hiç bağlanamayan her bağlantı (izleyici dahil) 20 sn sonra yeniden kurulur
+          (st !== "connected" && now - ctx.createdAt > (isStage ? 20000 : 25000));
         if (!dead) continue;
         closePeer(key, isHost);
         if (!isHost) {
@@ -606,6 +709,11 @@ export function useLiveEngine(params: {
         const hostP = list.find((p) => p.role === "host" && p.status === "live");
         if (hostP && greeted.current !== hostP.userId) {
           greeted.current = hostP.userId;
+          lastGreetAt.current = now;
+          queue({ to: hostP.userId, kind: "hello", body: sid.current });
+        } else if (hostP && now - lastGreetAt.current > 5000 && peers.current.get(hostP.userId)?.pc.connectionState !== "connected") {
+          // Yayıncıya bağlanana kadar hello'yu tekrarla (ilk hello kaybolduysa bağlantı hiç kurulmuyordu)
+          lastGreetAt.current = now;
           queue({ to: hostP.userId, kind: "hello", body: sid.current });
         } else if (!hostP) {
           greeted.current = null;
@@ -725,7 +833,12 @@ export function useLiveEngine(params: {
           return true;
         }
 
-        const videoC: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" };
+        const videoC: MediaTrackConstraints = {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, max: 30 },
+          facingMode: "user",
+        };
         const gum = (c: MediaStreamConstraints) => navigator.mediaDevices.getUserMedia(c);
         let raw: MediaStream;
         let warn: string | null = null;
@@ -787,7 +900,21 @@ export function useLiveEngine(params: {
   const startScreen = useCallback(async () => {
     setError(null);
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
+      // Sistem sesi DAHİL EDİLMEZ (stüdyodaki konuk/moderatör sesi ekran sesiyle geri dönüp yankı/çınlama yapıyordu);
+      // sekme paylaşımında yalnız o sekmenin sesi gider. Kendi sekmeni listede gösterme.
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 30, max: 30 } },
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          ...({ suppressLocalAudioPlayback: true } as Record<string, boolean>),
+        },
+        ...({ systemAudio: "exclude", selfBrowserSurface: "exclude", surfaceSwitching: "include" } as Record<string, string>),
+      } as DisplayMediaStreamOptions);
+      stream.getVideoTracks().forEach((t) => {
+        t.contentHint = "motion";
+      });
       screenCleanup.current?.();
       screenCleanup.current = null;
       localScreenRef.current?.getTracks().forEach((track) => track.stop());
@@ -902,6 +1029,18 @@ export function useLiveEngine(params: {
 
   useEffect(() => {
     if (!active || !streamId) return;
+    // TURN bilgisini al; bağlantılar bundan önce kurulduysa ayarı yeni bilgiyle güncelle
+    void loadTurnServers().then((fresh) => {
+      if (!fresh) return;
+      for (const [, ctx] of peers.current) {
+        try {
+          const cfg = ctx.pc.getConfiguration();
+          ctx.pc.setConfiguration({ ...cfg, iceServers: currentIceServers() });
+        } catch {
+          /* noop */
+        }
+      }
+    });
     const signalTimer = setInterval(() => void pollSignals(), 500);
     const flushTimer = setInterval(() => void flushOutbox(), 150);
     return () => {

@@ -217,6 +217,17 @@ export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
       }
     }, 30);
 
+    // AudioContext arka plana düşen sekmede / telefonda arama sonrası askıya alınır => ses gidip gelir.
+    // Askıya düşerse hemen geri başlat.
+    const keepAlive = () => {
+      if (ctx.state === "suspended" || (ctx.state as string) === "interrupted") void ctx.resume().catch(() => undefined);
+    };
+    ctx.addEventListener("statechange", keepAlive);
+    document.addEventListener("visibilitychange", keepAlive);
+    window.addEventListener("pointerdown", keepAlive);
+    window.addEventListener("focus", keepAlive);
+    const aliveTimer = window.setInterval(keepAlive, 2000);
+
     const processedTrack = dest.stream.getAudioTracks()[0];
     if (!processedTrack) throw new Error("no processed track");
 
@@ -225,6 +236,11 @@ export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
 
     const dispose = () => {
       window.clearInterval(timer);
+      window.clearInterval(aliveTimer);
+      ctx.removeEventListener("statechange", keepAlive);
+      document.removeEventListener("visibilitychange", keepAlive);
+      window.removeEventListener("pointerdown", keepAlive);
+      window.removeEventListener("focus", keepAlive);
       try {
         source.disconnect();
       } catch {

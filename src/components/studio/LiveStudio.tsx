@@ -1145,7 +1145,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
               >
                 <StageVideo
                   stream={main?.stream ?? null}
-                  muted={main?.camera ? true : Boolean(main?.muted) || listenOff}
+                  muted
                   mirror={main?.mirror}
                   fit={main?.fit ?? "cover"}
                   showVideo={main?.showVideo ?? false}
@@ -1264,6 +1264,13 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
             .filter(([uid]) => Number(uid) !== user.id)
             .map(([uid, st]) => (
               <AudioSink key={uid} stream={st} muted={listenOff} />
+            ))}
+
+          {/* Ekran/oyun sesi de tek yerden çalar: ekran popup'a küçülse bile ses kesilmez, iki kez çalıp yankı yapmaz */}
+          {Object.entries(engine.remoteScreens)
+            .filter(([uid]) => Number(uid) !== user.id)
+            .map(([uid, st]) => (
+              <AudioSink key={`screen-${uid}`} stream={st} muted={listenOff} />
             ))}
 
           {me?.status === "waiting" && (
