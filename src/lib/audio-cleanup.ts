@@ -17,6 +17,8 @@ export const MIC_CONSTRAINTS: MediaTrackConstraints = {
   noiseSuppression: { ideal: true },
   // AGC KAPALI: konuşma bitince kazancı yükseltip uğultu/çınlamayı büyütüyordu
   autoGainControl: { ideal: false },
+  // Destekleyen tarayıcılarda (Chrome/Edge yeni sürümler) konuşmayı arka plandan ayırır
+  ...({ voiceIsolation: { ideal: true } } as Record<string, unknown>),
   // Chrome'a özel ek filtreler (desteklemeyen tarayıcılar yok sayar)
   ...({
     googEchoCancellation: true,
@@ -33,10 +35,14 @@ export type CleanedAudio = {
   dispose: () => void;
 };
 
-const OPEN_THRESHOLD = 0.012; // ~ -38 dBFS: üstü konuşma sayılır
-const CLOSE_THRESHOLD = 0.007; // ~ -43 dBFS: altı gürültü sayılır
-const HOLD_MS = 350; // konuşma bitince kapıyı kapatmadan önce bekleme
-const FLOOR_GAIN = 0.03; // kapı kapalıyken tamamen susturmaz, sadece kısar
+// Eşikler ortamın gürültü tabanına göre otomatik ayarlanır (sessiz mikrofonda konuşma kesilmesin,
+// gürültülü odada kapı sürekli açılıp kapanıp "pompalama/çıtırtı" yapmasın).
+const MIN_OPEN = 0.008; // ~ -42 dBFS: en düşük açılma eşiği
+const MIN_CLOSE = 0.005; // ~ -46 dBFS: en düşük kapanma eşiği
+const OPEN_FACTOR = 3.0; // gürültü tabanının kaç katı üstü konuşma sayılır
+const CLOSE_FACTOR = 1.8;
+const HOLD_MS = 600; // konuşma bitince kapıyı kapatmadan önce bekleme (kelime sonları kırpılmasın)
+const FLOOR_GAIN = 0.15; // kapı kapalıyken tamamen susturmaz (~ -16 dB kısar): ani kesilme/pompalama olmaz
 
 export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
   const passthrough: CleanedAudio = { stream: raw, dispose: () => undefined };
@@ -124,6 +130,8 @@ export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
     let open = false;
     let lastVoice = 0;
     let lastSpec = 0;
+    let lastNotchAdd = 0;
+    let noiseFloor = 0.004;
     const timer = window.setInterval(() => {
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
@@ -131,7 +139,12 @@ export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
       const rms = Math.sqrt(sum / buf.length);
       const now = performance.now();
 
-      if (rms > (open ? CLOSE_THRESHOLD : OPEN_THRESHOLD)) {
+      // Gürültü tabanı: kapı kapalıyken yavaşça izlenir (konuşmayı taban sanmasın)
+      if (!open) noiseFloor = noiseFloor * 0.97 + Math.min(rms, 0.05) * 0.03;
+      const openTh = Math.max(MIN_OPEN, noiseFloor * OPEN_FACTOR);
+      const closeTh = Math.max(MIN_CLOSE, noiseFloor * CLOSE_FACTOR);
+
+      if (rms > (open ? closeTh : openTh)) {
         lastVoice = now;
         open = true;
       } else if (open && now - lastVoice > HOLD_MS) {
@@ -139,7 +152,7 @@ export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
       }
 
       const target = open ? 1 : FLOOR_GAIN;
-      gate.gain.setTargetAtTime(target, ctx.currentTime, open ? 0.015 : 0.12);
+      gate.gain.setTargetAtTime(target, ctx.currentTime, open ? 0.01 : 0.25);
 
       // --- çınlama tespiti (yaklaşık 100 ms'de bir) ---
       if (now - lastSpec > 100) {
@@ -158,7 +171,7 @@ export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
           }
         }
         const avg = sumDb / (hi - lo + 1);
-        const dominant = peak > -65 && peak - avg > 28;
+        const dominant = peak > -60 && peak - avg > 34;
 
         if (dominant && Math.abs(peakBin - candBin) <= 1) {
           candCount++;
@@ -172,12 +185,13 @@ export async function cleanMicStream(raw: MediaStream): Promise<CleanedAudio> {
         }
 
         const hz = candBin * binHz;
-        // ~1 sn boyunca aynı frekansta sabit tiz/uğultu => çınlama
-        if (candCount >= 10) {
+        // ~2 sn boyunca aynı frekansta sabit tiz/uğultu => çınlama (uzatılmış sesli harf yanlış alarm vermesin)
+        if (candCount >= 20) {
           const existing = notches.find((n) => Math.abs(n.freq - hz) < binHz * 2);
           if (existing) {
             existing.lastSeen = now;
-          } else {
+          } else if (now - lastNotchAdd > 4000) {
+            lastNotchAdd = now;
             const filter = ctx.createBiquadFilter();
             filter.type = "notch";
             filter.frequency.value = hz;

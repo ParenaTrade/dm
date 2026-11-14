@@ -247,7 +247,9 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
       setParticipants(list);
       setMe(data.me ?? null);
       const live = list.filter((p) => p.status === "live");
-      engineRef.current.syncParticipants(live.map((p) => ({ userId: p.userId, status: p.status, role: p.role })));
+      // Bekleyen konuk da yayını izliyor: bağlantısı korunsun (onaylanınca anında görüntü/ses gelsin).
+      const connected = list.filter((p) => p.status === "live" || p.status === "waiting");
+      engineRef.current.syncParticipants(connected.map((p) => ({ userId: p.userId, status: p.status, role: p.role })));
       engineRef.current.setRelaySources(
         live.filter((p) => p.role === "moderator" || p.role === "guest").map((p) => p.userId),
       );
@@ -382,9 +384,9 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
   const startBroadcast = async () => {
     const res = await streamAction({ action: "start" });
     if (!res.ok) setNotice(res.error ?? "Yayın başlatılamadı");
-    await engine.setMedia("camera");
-    setCamOn(true);
-    setMicOn(true);
+    const mediaOk = await engine.setMedia("camera");
+    setCamOn(mediaOk);
+    setMicOn(mediaOk);
     channelRef.current?.send({ type: "stage", text: "🔴 Yayın başladı! Berkbey sahnede." });
     setNotice("Yayın başladı! 🎬");
   };
@@ -674,9 +676,9 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
       }
       if (resumedRef.current || engine.mediaKind !== "off") return;
       resumedRef.current = true;
-      void engine.setMedia("camera").then(() => {
-        setCamOn(true);
-        setMicOn(true);
+      void engine.setMedia("camera").then((ok) => {
+        setCamOn(ok);
+        setMicOn(ok);
       });
       return;
     }
@@ -685,7 +687,14 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
       if (autoMediaRef.current) return;
       autoMediaRef.current = true;
       const videoOff = !isMod && guestCamOff;
-      void engine.setMedia("camera", { muted: isMod, videoOff }).then(() => {
+      void engine.setMedia("camera", { muted: isMod, videoOff }).then((ok) => {
+        if (!ok) {
+          // Medya açılamadı: düğmeler "kapalı" göstersin, kullanıcı tıklayınca tekrar denesin.
+          autoMediaRef.current = false;
+          setCamOn(false);
+          setMicOn(false);
+          return;
+        }
         setCamOn(!videoOff);
         setMicOn(!isMod);
       });
@@ -714,25 +723,39 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
     setNotice("Rumuzun güncellendi.");
   };
 
+  /** Medya kapalıyken (izin reddi / cihaz meşgul / ilk açılış) düğmeye basınca yeniden başlatır. */
+  const startOwnMedia = async () => {
+    const videoOff = !isHost && !isMod && guestCamOff;
+    const ok = await engine.setMedia("camera", { videoOff });
+    setMicOn(ok);
+    setCamOn(ok && !videoOff);
+  };
+
   const toggleMic = () => {
     if (engine.mediaKind === "off") {
-      void engine.setMedia("camera");
-      setCamOn(true);
-      setMicOn(true);
-    } else {
-      engine.toggleAudio();
-      setMicOn((v) => !v);
+      void startOwnMedia();
+      return;
     }
+    if (!engine.localStream?.getAudioTracks().length) {
+      setNotice("Mikrofon bulunamadı. Cihazını/izinleri kontrol et.");
+      return;
+    }
+    engine.toggleAudio();
+    setMicOn((v) => !v);
   };
 
   const toggleCam = () => {
     if (engine.mediaKind === "off") {
-      void engine.setMedia("camera");
-      setCamOn(true);
-    } else {
-      engine.toggleVideo();
-      setCamOn((c) => !c);
+      void startOwnMedia();
+      return;
     }
+    if (!engine.localStream?.getVideoTracks().length) {
+      setNotice("Kamera bulunamadı veya başka uygulama kullanıyor. Kapatıp 'Kamerayı aç'a tekrar bas.");
+      void startOwnMedia();
+      return;
+    }
+    engine.toggleVideo();
+    setCamOn((c) => !c);
   };
 
   /* ---------------- views ---------------- */
@@ -1259,7 +1282,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
             )
           )}
 
-          {canPublish && !showPip && (
+          {canPublish && (
             <>
               <button onClick={toggleMic} className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${micOn ? "text-white" : "text-red-300"}`}>
                 {micOn ? "🎙 Mikrofon Açık" : "🔇 Mikrofon Kapalı"}
@@ -1268,6 +1291,12 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                 {camOn ? "🎥 Kamera Açık" : "🚫 Kamera Kapalı"}
               </button>
             </>
+          )}
+
+          {onStageGuest && (
+            <span className="rounded-xl bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-200">
+              🎧 Sahnedesin. Yankı/gürültü olmaması için kulaklık tak.
+            </span>
           )}
 
           {isMod && (

@@ -34,7 +34,7 @@ export function SelfPip({
   const showVideo = Boolean(stream && camOn && !mediaOff);
 
   return (
-    <div className="absolute bottom-3 right-14 z-10 h-28 w-28 overflow-hidden rounded-2xl border-2 border-gold/60 bg-black shadow-xl shadow-black/60 sm:h-36 sm:w-36">
+    <div className="absolute bottom-3 right-14 z-10 h-32 w-32 overflow-hidden rounded-2xl border-2 border-gold/60 bg-black shadow-xl shadow-black/60 sm:h-40 sm:w-40">
       <video
         ref={ref}
         autoPlay
@@ -56,26 +56,36 @@ export function SelfPip({
           )}
         </div>
       )}
-      <div className="absolute inset-x-1 bottom-1 flex items-center justify-between gap-1">
+      <div className="absolute inset-x-1 bottom-1 z-20 flex items-center justify-between gap-1">
         <span className="truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">Sen</span>
-        {!mediaOff && (
-          <div className="flex gap-1">
-            <button
-              onClick={onToggleMic}
-              title={micOn ? "Mikrofonu kapat" : "Mikrofonu aç"}
-              className={`h-5 w-5 rounded text-[10px] ${micOn ? "bg-white/20" : "bg-red-600/80"}`}
-            >
-              {micOn ? "🎙" : "🔇"}
-            </button>
-            <button
-              onClick={onToggleCam}
-              title={camOn ? "Kamerayı kapat" : "Kamerayı aç"}
-              className={`h-5 w-5 rounded text-[10px] ${camOn ? "bg-white/20" : "bg-red-600/80"}`}
-            >
-              {camOn ? "🎥" : "🚫"}
-            </button>
-          </div>
-        )}
+        <div className="flex gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMic();
+            }}
+            title={micOn && !mediaOff ? "Mikrofonu kapat" : "Mikrofonu aç"}
+            aria-label={micOn && !mediaOff ? "Mikrofonu kapat" : "Mikrofonu aç"}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm ${
+              micOn && !mediaOff ? "bg-white/25" : "bg-red-600/90"
+            }`}
+          >
+            {micOn && !mediaOff ? "🎙" : "🔇"}
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCam();
+            }}
+            title={camOn && !mediaOff ? "Kamerayı kapat" : "Kamerayı aç"}
+            aria-label={camOn && !mediaOff ? "Kamerayı kapat" : "Kamerayı aç"}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg text-sm ${
+              camOn && !mediaOff ? "bg-white/25" : "bg-red-600/90"
+            }`}
+          >
+            {camOn && !mediaOff ? "🎥" : "🚫"}
+          </button>
+        </div>
       </div>
     </div>
   );

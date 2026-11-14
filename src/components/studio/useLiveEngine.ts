@@ -17,6 +17,12 @@ type PeerCtx = {
   ignoreOffer: boolean;
   settingRemoteAnswerPending: boolean;
   pendingCandidates: RTCIceCandidateInit[];
+  /** Bu bağlantıdan giden kamera+mikrofon için TEK sabit akış kimliği (ses ve video aynı akışta gelsin). */
+  camOut: MediaStream;
+  audioSender: RTCRtpSender | null;
+  videoSender: RTCRtpSender | null;
+  createdAt: number;
+  disconnectedAt: number | null;
 };
 
 type Outgoing = { to: number | null; kind: string; body: string };
@@ -85,6 +91,7 @@ export function useLiveEngine(params: {
   const relayedScreenUsers = useRef(new Map<number, Set<number>>());
   const screenRelaySenders = useRef(new Map<string, RTCRtpSender[]>());
   const sid = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
+  const helloSeq = useRef(0);
   const remoteSid = useRef(new Map<number, string>());
   const greeted = useRef<number | null>(null);
   const camStreams = useRef<Record<number, MediaStream>>({});
@@ -124,32 +131,36 @@ export function useLiveEngine(params: {
     }
   }, []);
 
-  const isScreenSender = (remoteId: number, sender: RTCRtpSender) =>
-    (screenSenders.current.get(remoteId) ?? []).includes(sender);
-
+  /**
+   * Kamera + mikrofonu bu bağlantıya bağlar.
+   * - Ses ve video HER ZAMAN aynı sabit akışla (ctx.camOut) gider; böylece karşı taraf tek bir akış görür.
+   *   (Eski kod: izleyici iken sessiz ses ayrı akışla gidiyordu, konuk kamerayı sonradan açınca
+   *   ses ve görüntü iki ayrı akışa bölünüyor, yayıncı/diğerleri görüntüyü hiç göstermiyordu.)
+   * - Gönderici (sender) referansları saklanır; ekran/aktarım göndericileriyle karışmaz.
+   */
   const attachLocalTracks = useCallback((ctx: PeerCtx) => {
-    const stream = localStreamRef.current;
-    const kinds = new Set<string>();
-    if (stream) {
-      for (const track of stream.getTracks()) {
-        kinds.add(track.kind);
-        const sender = ctx.pc
-          .getSenders()
-          .find((s) => s.track?.kind === track.kind && !isScreenSender(ctx.remoteId, s));
-        if (sender) {
-          sender.replaceTrack(track).catch(() => undefined);
-        } else {
-          ctx.pc.addTrack(track, stream);
-        }
+    const local = localStreamRef.current;
+    const video = local?.getVideoTracks()[0] ?? null;
+    let audio: MediaStreamTrack | null = local?.getAudioTracks()[0] ?? null;
+
+    // SDP boş kalmasın diye mikrofon yokken sessiz ses kanalı kullan
+    if (!audio) {
+      if (!silentTrack.current || silentTrack.current.readyState === "ended") {
+        silentTrack.current = createSilentAudioTrack();
       }
+      audio = silentTrack.current;
     }
-    // SDP boş kalmasın diye sessiz ses kanalı ekle
-    if (!kinds.has("audio")) {
-      if (!silentTrack.current) silentTrack.current = createSilentAudioTrack();
-      const track = silentTrack.current;
-      const sender = ctx.pc.getSenders().find((s) => s.track?.kind === "audio" && !isScreenSender(ctx.remoteId, s));
-      if (sender && track) sender.replaceTrack(track).catch(() => undefined);
-      else if (track) ctx.pc.addTrack(track, stream ?? new MediaStream([track]));
+
+    if (audio) {
+      if (ctx.audioSender) ctx.audioSender.replaceTrack(audio).catch(() => undefined);
+      else ctx.audioSender = ctx.pc.addTrack(audio, ctx.camOut);
+    }
+
+    if (video) {
+      if (ctx.videoSender) ctx.videoSender.replaceTrack(video).catch(() => undefined);
+      else ctx.videoSender = ctx.pc.addTrack(video, ctx.camOut);
+    } else if (ctx.videoSender) {
+      ctx.videoSender.replaceTrack(null).catch(() => undefined);
     }
   }, []);
 
@@ -378,6 +389,11 @@ export function useLiveEngine(params: {
         ignoreOffer: false,
         settingRemoteAnswerPending: false,
         pendingCandidates: [],
+        camOut: new MediaStream(),
+        audioSender: null,
+        videoSender: null,
+        createdAt: Date.now(),
+        disconnectedAt: null,
       };
 
       pc.onicecandidate = (event) => {
@@ -412,6 +428,7 @@ export function useLiveEngine(params: {
 
       pc.onconnectionstatechange = () => {
         setPeerStates((prev) => ({ ...prev, [remoteId]: pc.connectionState }));
+        ctx.disconnectedAt = pc.connectionState === "disconnected" ? (ctx.disconnectedAt ?? Date.now()) : null;
         if (pc.connectionState === "failed") {
           const withRestart = pc as RTCPeerConnection & { restartIce?: () => void };
           withRestart.restartIce?.();
@@ -419,7 +436,10 @@ export function useLiveEngine(params: {
       };
 
       peers.current.set(remoteId, ctx);
-      queue({ to: remoteId, kind: "hello", body: sid.current });
+      // Yayıncı her yeni bağlantıda BENZERSİZ bir hello kimliği yollar: karşı taraf eski (bayat)
+      // bağlantısını bırakıp temiz başlar. (Konuk bekleme→sahne geçişinde eski bağlantı takılı kalıyordu.)
+      const helloBody = paramsRef.current.isHost ? `${sid.current}.${++helloSeq.current}` : sid.current;
+      queue({ to: remoteId, kind: "hello", body: helloBody });
       attachLocalTracks(ctx);
       if (localScreenRef.current) attachScreen(ctx);
       if (paramsRef.current.isHost) syncRelays();
@@ -428,9 +448,10 @@ export function useLiveEngine(params: {
     [attachLocalTracks, attachScreen, publishRemote, queue, syncRelays],
   );
 
-  const closePeer = useCallback((remoteId: number) => {
+  const closePeer = useCallback((remoteId: number, notify = false) => {
     const ctx = peers.current.get(remoteId);
     if (!ctx) return;
+    if (notify) queue({ to: remoteId, kind: "bye", body: "" });
     ctx.pc.onicecandidate = null;
     ctx.pc.ontrack = null;
     ctx.pc.onnegotiationneeded = null;
@@ -503,7 +524,7 @@ export function useLiveEngine(params: {
       delete next[remoteId];
       return next;
     });
-  }, [sendMeta]);
+  }, [queue, sendMeta]);
 
   const handleDescription = useCallback(async (ctx: PeerCtx, description: RTCSessionDescriptionInit) => {
     const pc = ctx.pc;
@@ -545,15 +566,40 @@ export function useLiveEngine(params: {
     }
   }, []);
 
-  /** Yayıncı: canlı katılımcılarla bağlantı kur / kopanları kapat. */
+  /** Yayıncı: canlı katılımcılarla bağlantı kur / kopanları kapat; takılı kalan bağlantıları yenile. */
   const syncParticipants = useCallback(
     (list: { userId: number; status: string; role?: string }[]) => {
       const me = paramsRef.current.userId;
       if (!me) return;
       const isHost = paramsRef.current.isHost;
+      // "waiting" (konuk isteği bekleyen) kişi hâlâ yayını izliyor: bağlantısı KAPANMAMALI.
+      // (Eskiden kapanıyordu; onaylanınca konuk eski/ölü bağlantıda kalıyor, yayıncıyı göremiyordu.)
+      const connectable = (status: string) => status === "live" || status === "waiting";
+      const now = Date.now();
+
+      // 1) Ölü / takılı bağlantıları temizle (yeniden kurulacak)
+      for (const [key, ctx] of Array.from(peers.current)) {
+        const match = list.find((p) => p.userId === key);
+        if (!match || !connectable(match.status)) continue;
+        const st = ctx.pc.connectionState;
+        const isStage = match.role === "guest" || match.role === "moderator";
+        const dead =
+          st === "failed" ||
+          st === "closed" ||
+          (st === "disconnected" && ctx.disconnectedAt !== null && now - ctx.disconnectedAt > 8000) ||
+          (isHost && isStage && st !== "connected" && now - ctx.createdAt > 20000);
+        if (!dead) continue;
+        closePeer(key, isHost);
+        if (!isHost) {
+          remoteSid.current.delete(key);
+          if (greeted.current === key) greeted.current = null;
+        }
+      }
+
+      // 2) Yeni bağlantılar
       for (const p of list) {
         if (p.userId === me) continue;
-        if (p.status === "live" && isHost) ensurePeer(p.userId, false);
+        if (isHost && connectable(p.status)) ensurePeer(p.userId, false);
       }
       if (!isHost) {
         // İzleyici/mod/konuk: yayıncıya "buradayım" de; yenileme sonrası eski bağlantı temizlenir.
@@ -565,9 +611,11 @@ export function useLiveEngine(params: {
           greeted.current = null;
         }
       }
+
+      // 3) Gerçekten ayrılan / çıkarılan kişilerin bağlantısını kapat
       for (const key of Array.from(peers.current.keys())) {
         const match = list.find((p) => p.userId === key);
-        if (!match || match.status !== "live") closePeer(key);
+        if (!match || !connectable(match.status)) closePeer(key);
       }
     },
     [closePeer, ensurePeer, queue],
@@ -591,6 +639,9 @@ export function useLiveEngine(params: {
       if (from === paramsRef.current.userId) return;
       if (kind === "bye") {
         closePeer(from);
+        // Yeni bir "hello" gelene kadar bu göndericinin eski sinyallerini yok say; yeniden selamlaş.
+        remoteSid.current.delete(from);
+        if (greeted.current === from) greeted.current = null;
         return;
       }
       if (!body) return;
@@ -654,8 +705,13 @@ export function useLiveEngine(params: {
     }
   }, [processSignal]);
 
+  /**
+   * Kamera + mikrofonu başlatır. Başarılıysa true döner.
+   * Kamera yok / başka uygulama kullanıyorsa yalnız mikrofonla devam eder (eskiden her şey iptal oluyordu,
+   * konukta ne kamera ne mikrofon düğmesi çalışıyordu).
+   */
   const setMedia = useCallback(
-    async (kind: "off" | "camera", opts?: { muted?: boolean; videoOff?: boolean }) => {
+    async (kind: "off" | "camera", opts?: { muted?: boolean; videoOff?: boolean }): Promise<boolean> => {
       setError(null);
       try {
         if (kind === "off") {
@@ -666,13 +722,31 @@ export function useLiveEngine(params: {
           setLocalStream(null);
           setMediaKind("off");
           for (const [, ctx] of peers.current) attachLocalTracks(ctx);
-          return;
+          return true;
         }
 
-        const raw = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-          audio: MIC_CONSTRAINTS,
-        });
+        const videoC: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" };
+        const gum = (c: MediaStreamConstraints) => navigator.mediaDevices.getUserMedia(c);
+        let raw: MediaStream;
+        let warn: string | null = null;
+        try {
+          raw = await gum({ video: videoC, audio: MIC_CONSTRAINTS });
+        } catch (err) {
+          const name = err instanceof Error ? err.name : "";
+          if (name === "NotAllowedError" || name === "SecurityError") throw err;
+          try {
+            raw = await gum({ video: videoC, audio: true }); // kısıt reddedildiyse sade ayarla dene
+          } catch {
+            try {
+              raw = await gum({ audio: MIC_CONSTRAINTS }); // kamera yok/meşgul: yalnız mikrofon
+              warn = "Kamera açılamadı (başka uygulama kullanıyor olabilir). Yalnız mikrofonla devam ediliyor.";
+            } catch {
+              raw = await gum({ video: videoC }); // mikrofon yok: yalnız kamera
+              warn = "Mikrofon bulunamadı. Yalnız kamera ile devam ediliyor.";
+            }
+          }
+        }
+
         // Mikrofon sesini otomatik temizle (gürültü kapısı, filtre, kompresör)
         const cleaned = await cleanMicStream(raw);
         const stream = cleaned.stream;
@@ -686,12 +760,15 @@ export function useLiveEngine(params: {
         setLocalStream(stream);
         setMediaKind("camera");
         for (const [, ctx] of peers.current) attachLocalTracks(ctx);
+        if (warn) setError(warn);
+        return true;
       } catch (err) {
         setError(
           err instanceof Error && err.name === "NotAllowedError"
             ? "Kamera/mikrofon izni verilmedi. Tarayıcı izinlerini kontrol et."
             : "Medya başlatılamadı. Cihazını kontrol et.",
         );
+        return false;
       }
     },
     [attachLocalTracks],
