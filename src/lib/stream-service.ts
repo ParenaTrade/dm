@@ -27,6 +27,7 @@ export function toStreamInfo(row: typeof streams.$inferSelect): StreamInfo {
     chatLocked: row.chatLocked,
     slowModeSeconds: row.slowModeSeconds,
     guestLimit: row.guestLimit,
+    stageLayout: row.stageLayout,
     hostNickname: row.hostNickname,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
   };

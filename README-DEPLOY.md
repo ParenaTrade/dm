@@ -89,13 +89,20 @@ tıklayınca otomatik giriş yapılır. Onaylanmamış e-posta ile oturum açıl
 
 ## 6. Ekran davranışı (güncel)
 
-- **Ana canlı ekran:** yayıncının paylaştığı oyun / maç / ekran görüntüsü (`🎮 Oyun / Maç / Ekran Paylaş` düğmesi, ses dahil tarayıcı izin verirse).
-- **Sol üst popup:** yayıncının yüzü (kamera). Popup'a **çift tıklayınca** yayıncı kamerası ana ekranı doldurur, tekrar çift tıklayınca eski düzene döner.
-- Ekran paylaşılmıyorsa yayıncı kamerası tüm ekranı kaplar. Yayın başlamadıysa herkes **📴 Yayın Kapalı** görür.
-- **Rumuz:** Kayıtta Ad Soyad (gizli) + Rumuz (herkese görünen) istenir. İzleyiciler birbirinin yalnızca rumuzunu görür; ad soyad ve e-posta sadece admin/moderatör panelinde görünür. Üstteki rumuz düğmesinden değiştirilebilir.
-- **Moderatör** kamera açmaz; canlı yayına sohbet mesajlarını yönetmek için katılır (mesaj silme, susturma, uzaklaştırma).
-- Sistem durumu ayrıntıları yalnızca admin/moderatör panelinde (**Sistem Durumu** sekmesi). İzleyiciler yalnızca **Aktif (yeşil)** / **Pasif (kırmızı)** düğmesini görür.
-- Aynı tarayıcıda iki hesap denerken tek oturum paylaşılır; farklı rolleri test etmek için gizli pencere veya başka tarayıcı kullan.
+- **Ana canlı ekran:** yayıncının paylaştığı oyun / maç / ekran (`🎮 Oyun / Maç / Ekran Paylaş`, ses dahil tarayıcı izin verirse).
+  Ekran paylaşılmıyorsa yayıncı kamerası ana ekranı kaplar. Yayın başlamadıysa herkes **📴 Yayın Kapalı** görür.
+- **Sol üst popup'lar:** moderatör (yayını sunan kişi) kamerası ve yayıncı kamerası. Moderatör canlı yayına girince kamerası
+  otomatik açılır (mikrofon kapalı başlar, tek tıkla açılır) ve popup herkese görünür.
+- **Büyüt / küçült:** yayıncı veya moderatör bir popup'a **çift tıklayınca** o kamera ana ekranı kaplar, ana ekrana tekrar
+  çift tıklayınca eski düzene döner. Değişiklik **tüm izleyicilerde anında** güncellenir.
+- Moderatör/konuk kameraları yayıncı üzerinden herkese aktarılır; konuklar ve moderatör kendi kamerasını görürken sahneyi de görür.
+- **Gerçek zamanlı güncelleme:** yayın başlat/bitir, konuk isteği/onayı, ekran düzeni değişiklikleri Supabase Realtime ile anında
+  duyurulur; Realtime yoksa 1,5 sn'lik yoklama devreye girer.
+- **Sayfa yenileme:** yayıncı yenilerse kamerası otomatik geri gelir (ekran paylaşımı tarayıcı kuralı gereği yeniden başlatılmalı);
+  izleyici/moderatör yenilerse bağlantı kendiliğinden yeniden kurulur.
+- **Rumuz:** Kayıtta Ad Soyad (gizli) + Rumuz (herkese görünen). İzleyiciler yalnızca rumuz görür.
+- Sistem durumu ayrıntıları yalnızca admin/moderatör panelinde; izleyiciler yalnızca **Aktif (yeşil)** / **Pasif (kırmızı)** düğmesini görür.
+- Aynı tarayıcıda iki hesap tek oturumu paylaşır; farklı rolleri test etmek için gizli pencere veya başka tarayıcı kullan.
 
 ## 7. Notlar
 

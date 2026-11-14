@@ -57,6 +57,7 @@ export const streams = pgTable("streams", {
   chatLocked: boolean("chat_locked").notNull().default(false),
   slowModeSeconds: integer("slow_mode_seconds").notNull().default(0),
   guestLimit: integer("guest_limit").notNull().default(3),
+  stageLayout: text("stage_layout").notNull().default("screen"), // screen | mod | host
   hostNickname: text("host_nickname").notNull().default("Berkbey"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   endedAt: timestamp("ended_at", { withTimezone: true }),

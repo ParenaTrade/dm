@@ -75,7 +75,14 @@ export function useLiveEngine(params: {
   const localScreenRef = useRef<MediaStream | null>(null);
   const screenSenders = useRef(new Map<number, RTCRtpSender[]>());
   const incoming = useRef(new Map<number, Map<string, MediaStream>>());
-  const screenMeta = useRef(new Map<number, string | null>());
+  const screenMeta = useRef(new Map<number, { screenId: string | null; relays: Record<string, number> }>());
+  const sid = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
+  const remoteSid = useRef(new Map<number, string>());
+  const greeted = useRef<number | null>(null);
+  const camStreams = useRef<Record<number, MediaStream>>({});
+  const relayedUsers = useRef(new Map<number, Set<number>>());
+  const relaySources = useRef<Set<number>>(new Set());
+  const relaySenders = useRef(new Map<string, RTCRtpSender[]>());
   const paramsRef = useRef({ streamId, userId, isHost, active, realtimeMode });
   paramsRef.current = { streamId, userId, isHost, active, realtimeMode };
 
@@ -138,7 +145,70 @@ export function useLiveEngine(params: {
     }
   }, []);
 
-  /** Yayıncı: ekran/oyun akışını (ayrı video) bu bağlantıya ekle veya kaldır. */
+  /** Yayıncı: bu bağlantıya ekran akışı + aktarılan moderatör/konuk kameraları hakkında bilgi gönder. */
+  const sendMeta = useCallback(
+    (to: number) => {
+      const relays: Record<string, number> = {};
+      for (const [key] of relaySenders.current) {
+        const [toS, fromS] = key.split(":");
+        if (Number(toS) !== to) continue;
+        const stream = camStreams.current[Number(fromS)];
+        if (stream) relays[stream.id] = Number(fromS);
+      }
+      queue({ to, kind: "meta", body: JSON.stringify({ screenId: localScreenRef.current?.id ?? null, relays }) });
+    },
+    [queue],
+  );
+
+  /** Yayıncı merkezli aktarım: moderatör/konuk kameralarını diğer herkese ilet. */
+  const syncRelays = useCallback(() => {
+    if (!paramsRef.current.isHost) return;
+    const wanted = relaySources.current;
+    let changed = false;
+    for (const [key, senders] of Array.from(relaySenders.current)) {
+      const [toS, fromS] = key.split(":");
+      const toCtx = peers.current.get(Number(toS));
+      if (!toCtx || !wanted.has(Number(fromS)) || !camStreams.current[Number(fromS)]) {
+        if (toCtx) {
+          for (const sender of senders) {
+            try {
+              toCtx.pc.removeTrack(sender);
+            } catch {
+              /* noop */
+            }
+          }
+        }
+        relaySenders.current.delete(key);
+        changed = true;
+      }
+    }
+    for (const from of wanted) {
+      const source = camStreams.current[from];
+      if (!source) continue;
+      const tracks = source.getTracks();
+      for (const [to, ctx] of peers.current) {
+        if (to === from) continue;
+        const key = `${to}:${from}`;
+        const existing = relaySenders.current.get(key);
+        if (existing && existing.length === tracks.length) continue;
+        existing?.forEach((sender) => {
+          try {
+            ctx.pc.removeTrack(sender);
+          } catch {
+            /* noop */
+          }
+        });
+        relaySenders.current.set(
+          key,
+          tracks.map((track) => ctx.pc.addTrack(track, source)),
+        );
+        changed = true;
+      }
+    }
+    if (changed) for (const [to] of peers.current) sendMeta(to);
+  }, [sendMeta]);
+
+  /** Yayıncı: ekran/oyun akışını bu bağlantıya ekle veya kaldır. */
   const attachScreen = useCallback(
     (ctx: PeerCtx) => {
       const screen = localScreenRef.current;
@@ -156,30 +226,40 @@ export function useLiveEngine(params: {
         const senders = screen.getTracks().map((track) => ctx.pc.addTrack(track, screen));
         screenSenders.current.set(ctx.remoteId, senders);
       }
-      queue({ to: ctx.remoteId, kind: "meta", body: JSON.stringify({ screenId: screen?.id ?? null }) });
+      sendMeta(ctx.remoteId);
     },
-    [queue],
+    [sendMeta],
   );
 
-  /** İzleyici: gelen akışları kamera ve ekran olarak ayır (meta sinyaline göre). */
+  /** Gelen akışları ayır: yayıncı kamerası, ekran paylaşımı ve aktarılan moderatör/konuk kameraları. */
   const publishRemote = useCallback((remoteId: number) => {
     const map = incoming.current.get(remoteId);
     if (!map) return;
-    const screenId = screenMeta.current.get(remoteId);
+    const meta = screenMeta.current.get(remoteId);
+    const screenId = meta?.screenId ?? null;
+    const relays = meta?.relays ?? {};
     const streams = Array.from(map.values());
-    let camera: MediaStream | undefined;
-    let screen: MediaStream | undefined;
-    if (typeof screenId === "string") {
-      screen = map.get(screenId);
-      camera = streams.find((st) => st.id !== screenId);
-    } else {
-      camera = streams[0];
-      if (screenId === null && streams.length > 1 && camera) {
-        map.clear();
-        map.set(camera.id, camera);
-      }
+
+    const camera = streams.find((st) => st.id !== screenId && relays[st.id] === undefined);
+    const screen = screenId ? map.get(screenId) : undefined;
+
+    const relayedNow = new Map<number, MediaStream>();
+    for (const [streamId, userId] of Object.entries(relays)) {
+      const stream = map.get(streamId);
+      if (stream) relayedNow.set(userId, stream);
     }
-    if (camera) setRemoteStreams((prev) => (prev[remoteId] === camera ? prev : { ...prev, [remoteId]: camera }));
+    const prevRelayed = relayedUsers.current.get(remoteId) ?? new Set<number>();
+    relayedUsers.current.set(remoteId, new Set(relayedNow.keys()));
+
+    if (camera) camStreams.current[remoteId] = camera;
+
+    setRemoteStreams((prev) => {
+      const next = { ...prev };
+      if (camera) next[remoteId] = camera;
+      for (const uid of prevRelayed) if (!relayedNow.has(uid)) delete next[uid];
+      for (const [uid, stream] of relayedNow) next[uid] = stream;
+      return next;
+    });
     setRemoteScreens((prev) => {
       if (screen) return prev[remoteId] === screen ? prev : { ...prev, [remoteId]: screen };
       if (!(remoteId in prev)) return prev;
@@ -187,7 +267,9 @@ export function useLiveEngine(params: {
       delete next[remoteId];
       return next;
     });
-  }, []);
+
+    if (paramsRef.current.isHost) syncRelays();
+  }, [syncRelays]);
 
   const ensurePeer = useCallback(
     (remoteId: number, polite: boolean): PeerCtx => {
@@ -244,11 +326,13 @@ export function useLiveEngine(params: {
       };
 
       peers.current.set(remoteId, ctx);
+      queue({ to: remoteId, kind: "hello", body: sid.current });
       attachLocalTracks(ctx);
       if (localScreenRef.current) attachScreen(ctx);
+      if (paramsRef.current.isHost) syncRelays();
       return ctx;
     },
-    [attachLocalTracks, attachScreen, publishRemote, queue],
+    [attachLocalTracks, attachScreen, publishRemote, queue, syncRelays],
   );
 
   const closePeer = useCallback((remoteId: number) => {
@@ -266,6 +350,33 @@ export function useLiveEngine(params: {
     incoming.current.delete(remoteId);
     screenMeta.current.delete(remoteId);
     screenSenders.current.delete(remoteId);
+    delete camStreams.current[remoteId];
+    for (const [key, senders] of Array.from(relaySenders.current)) {
+      const [toS, fromS] = key.split(":");
+      if (Number(toS) !== remoteId && Number(fromS) !== remoteId) continue;
+      relaySenders.current.delete(key);
+      const toCtx = peers.current.get(Number(toS));
+      if (toCtx && Number(toS) !== remoteId) {
+        // Ayrılan kaynağın aktarımını diğer katılımcılardan kaldır.
+        for (const sender of senders) {
+          try {
+            toCtx.pc.removeTrack(sender);
+          } catch {
+            /* noop */
+          }
+        }
+        sendMeta(Number(toS));
+      }
+    }
+    const relayed = relayedUsers.current.get(remoteId);
+    relayedUsers.current.delete(remoteId);
+    if (relayed?.size) {
+      setRemoteStreams((prev) => {
+        const next = { ...prev };
+        for (const uid of relayed) delete next[uid];
+        return next;
+      });
+    }
     setRemoteScreens((prev) => {
       const next = { ...prev };
       delete next[remoteId];
@@ -281,7 +392,7 @@ export function useLiveEngine(params: {
       delete next[remoteId];
       return next;
     });
-  }, []);
+  }, [sendMeta]);
 
   const handleDescription = useCallback(async (ctx: PeerCtx, description: RTCSessionDescriptionInit) => {
     const pc = ctx.pc;
@@ -325,13 +436,22 @@ export function useLiveEngine(params: {
 
   /** Yayıncı: canlı katılımcılarla bağlantı kur / kopanları kapat. */
   const syncParticipants = useCallback(
-    (list: { userId: number; status: string }[]) => {
+    (list: { userId: number; status: string; role?: string }[]) => {
       const me = paramsRef.current.userId;
       if (!me) return;
+      const isHost = paramsRef.current.isHost;
       for (const p of list) {
         if (p.userId === me) continue;
-        if (p.status === "live" && paramsRef.current.isHost) {
-          ensurePeer(p.userId, false);
+        if (p.status === "live" && isHost) ensurePeer(p.userId, false);
+      }
+      if (!isHost) {
+        // İzleyici/mod/konuk: yayıncıya "buradayım" de; yenileme sonrası eski bağlantı temizlenir.
+        const hostP = list.find((p) => p.role === "host" && p.status === "live");
+        if (hostP && greeted.current !== hostP.userId) {
+          greeted.current = hostP.userId;
+          queue({ to: hostP.userId, kind: "hello", body: sid.current });
+        } else if (!hostP) {
+          greeted.current = null;
         }
       }
       for (const key of Array.from(peers.current.keys())) {
@@ -339,7 +459,19 @@ export function useLiveEngine(params: {
         if (!match || match.status !== "live") closePeer(key);
       }
     },
-    [closePeer, ensurePeer],
+    [closePeer, ensurePeer, queue],
+  );
+
+  /** Yayıncı: hangi katılımcıların kamerası herkese aktarılsın (canlı moderatör/konuklar). */
+  const setRelaySources = useCallback(
+    (ids: number[]) => {
+      const next = new Set(ids);
+      const same = next.size === relaySources.current.size && ids.every((id) => relaySources.current.has(id));
+      if (same) return;
+      relaySources.current = next;
+      syncRelays();
+    },
+    [syncRelays],
   );
 
   /** Hem Realtime broadcast hem REST kuyruğu için tek sinyal işleyici. */
@@ -351,10 +483,19 @@ export function useLiveEngine(params: {
         return;
       }
       if (!body) return;
+      if (kind === "hello") {
+        const prev = remoteSid.current.get(from);
+        remoteSid.current.set(from, body);
+        // Karşı taraf yenilenmişse (yeni oturum kimliği) eski bağlantıyı bırak; yenisi kurulacak.
+        if (prev && prev !== body) closePeer(from);
+        return;
+      }
+      // Hello almadığımız göndericinin sinyali bayat olabilir (eski oturum): yok say.
+      if (!remoteSid.current.has(from)) return;
       if (kind === "meta") {
         try {
-          const meta = JSON.parse(body) as { screenId?: string | null };
-          screenMeta.current.set(from, meta.screenId ?? null);
+          const meta = JSON.parse(body) as { screenId?: string | null; relays?: Record<string, number> };
+          screenMeta.current.set(from, { screenId: meta.screenId ?? null, relays: meta.relays ?? {} });
           publishRemote(from);
         } catch {
           /* noop */
@@ -474,8 +615,8 @@ export function useLiveEngine(params: {
 
   useEffect(() => {
     if (!active || !streamId) return;
-    const signalTimer = setInterval(() => void pollSignals(), 900);
-    const flushTimer = setInterval(() => void flushOutbox(), 320);
+    const signalTimer = setInterval(() => void pollSignals(), 500);
+    const flushTimer = setInterval(() => void flushOutbox(), 150);
     return () => {
       clearInterval(signalTimer);
       clearInterval(flushTimer);
@@ -513,6 +654,7 @@ export function useLiveEngine(params: {
     toggleAudio,
     toggleVideo,
     syncParticipants,
+    setRelaySources,
     processSignal,
     clearError: () => setError(null),
   };

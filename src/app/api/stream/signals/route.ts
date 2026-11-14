@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { participants, rtcSignals } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
@@ -17,6 +17,9 @@ export async function GET(request: Request) {
 
   const stream = await getActiveStream();
   if (!stream) return Response.json({ ok: true, signals: [], cursor: since });
+
+  // Eski oturumlardan kalan bayat sinyalleri at (yenileme sonrası karışıklığı önler).
+  await db.delete(rtcSignals).where(lt(rtcSignals.createdAt, new Date(Date.now() - 25_000)));
 
   const rows = await db
     .select()

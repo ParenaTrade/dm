@@ -81,11 +81,12 @@ export function LiveStudio() {
     userId: user?.id ?? null,
     isHost: Boolean(isHost),
     active: Boolean(user),
-    realtimeMode: realtimeLive,
+    realtimeMode: false, // WebRTC sinyalleri güvenilir REST kuyruğundan; anlık durum için Realtime 'state' olayı
   });
 
   const engineRef = useRef(engine);
   engineRef.current = engine;
+  const refreshRef = useRef<() => Promise<void>>(async () => undefined);
   const applyBroadcast = useCallback((event: StreamBroadcast) => {
     switch (event.type) {
       case "chat:new":
@@ -105,6 +106,9 @@ export function LiveStudio() {
         break;
       case "stage":
         setNotice(event.text);
+        break;
+      case "state":
+        void refreshRef.current();
         break;
     }
   }, []);
@@ -199,55 +203,68 @@ export function LiveStudio() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return (await res.json().catch(() => ({ ok: false, error: "Bağlantı hatası" }))) as {
+    const result = (await res.json().catch(() => ({ ok: false, error: "Bağlantı hatası" }))) as {
       ok: boolean;
       error?: string;
       participant?: ParticipantInfo;
     };
+    // Durumu değiştiren işlemler herkese anında duyurulur (Realtime) ve kendimiz hemen yenileriz.
+    const mutating = ["start", "stop", "join", "admit", "remove", "layout", "settings", "muteAll", "leave"];
+    if (result.ok && mutating.includes(String(body.action))) {
+      channelRef.current?.send({ type: "state" });
+      void refreshRef.current();
+    }
+    return result;
   }, []);
 
   /* ---------------- join + polling ---------------- */
   useEffect(() => {
     if (!user) return;
     void streamAction({ action: "join", as: "viewer" });
-  }, [user?.id, streamAction, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const refreshStream = useCallback(async () => {
+    try {
+      const res = await fetch("/api/stream", { cache: "no-store" });
+      const data = await res.json();
+      if (!data.ok) return;
+      const list = (data.participants ?? []) as ParticipantInfo[];
+      setStream(data.stream as StreamInfo);
+      setParticipants(list);
+      setMe(data.me ?? null);
+      const live = list.filter((p) => p.status === "live");
+      engineRef.current.syncParticipants(live.map((p) => ({ userId: p.userId, status: p.status, role: p.role })));
+      engineRef.current.setRelaySources(
+        live.filter((p) => p.role === "moderator" || p.role === "guest").map((p) => p.userId),
+      );
+    } catch {
+      /* noop */
+    }
+  }, []);
+  refreshRef.current = refreshStream;
 
   useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/api/stream", { cache: "no-store" });
-        const data = await res.json();
-        if (cancelled || !data.ok) return;
-        setStream(data.stream as StreamInfo);
-        setParticipants((data.participants ?? []) as ParticipantInfo[]);
-        setMe(data.me ?? null);
-        engine.syncParticipants(
-          ((data.participants ?? []) as ParticipantInfo[])
-            .filter((p) => p.status === "live")
-            .map((p) => ({ userId: p.userId, status: p.status })),
-        );
-      } catch {
-        /* noop */
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), 2000);
+    if (!user?.id) return;
+    void refreshStream();
+    const timer = setInterval(() => void refreshStream(), 1500);
+    const onVisible = () => document.visibilityState === "visible" && void refreshStream();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
-      cancelled = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [user?.id, engine, user]);
+  }, [user?.id, refreshStream]);
 
   /* ---------------- Supabase Realtime kanalı ---------------- */
   useEffect(() => {
-    if (!user || !stream) return;
+    const current = userRef.current;
+    if (!current || !stream) return;
     const handle = joinStreamChannel({
       streamId: stream.id,
-      userId: user.id,
-      nickname: user.nickname,
-      role: user.role,
+      userId: current.id,
+      nickname: current.nickname,
+      role: current.role,
       onEvent: applyBroadcast,
       onPresence: setPresencePeers,
       onStatus: setRtStatus,
@@ -261,7 +278,8 @@ export function LiveStudio() {
       setPresencePeers([]);
       setRtStatus("off");
     };
-  }, [user?.id, stream?.id, user, stream, applyBroadcast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, stream?.id, applyBroadcast]);
 
   /* Sahne durumunu presence'a yaz (gerçek canlı izleyici/konuk listesi) */
   useEffect(() => {
@@ -272,7 +290,7 @@ export function LiveStudio() {
       role: me?.role ?? user.role,
       stage: me?.status === "live",
     });
-  }, [realtimeLive, me?.role, me?.status, user?.id, user?.nickname, user?.role, user]);
+  }, [realtimeLive, me?.role, me?.status, user?.id, user?.nickname, user?.role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!user) return;
@@ -298,23 +316,36 @@ export function LiveStudio() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [user?.id, user, realtimeLive]);
+  }, [user?.id, realtimeLive]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const hbRef = useRef({ cameraOn: false, micOn: false, handRaised: false, screen: false });
+  hbRef.current = {
+    cameraOn: engine.mediaKind !== "off" && camOn,
+    micOn: engine.mediaKind !== "off" && micOn,
+    handRaised,
+    screen: Boolean(engine.screenStream),
+  };
+  const hasMe = Boolean(me);
+  const sendHeartbeat = useCallback(() => {
+    const h = hbRef.current;
+    void streamAction({
+      action: "heartbeat",
+      patch: { cameraOn: h.cameraOn, micOn: h.micOn, handRaised: h.handRaised, isScreenSharing: h.screen },
+    });
+  }, [streamAction]);
+
+  // Düzenli kalp atışı: katılımcı "canlı" kalsın (effect bağımlılıkları kararlı, süre dolmaz).
   useEffect(() => {
-    if (!user || !me) return;
-    const timer = setInterval(() => {
-      void streamAction({
-        action: "heartbeat",
-        patch: {
-          cameraOn: engine.mediaKind !== "off" && camOn,
-          micOn,
-          handRaised,
-          isScreenSharing: Boolean(engine.screenStream),
-        },
-      });
-    }, 5000);
+    if (!user?.id || !hasMe) return;
+    const timer = setInterval(sendHeartbeat, 4000);
     return () => clearInterval(timer);
-  }, [user?.id, me?.id, engine.mediaKind, engine.screenStream, camOn, micOn, handRaised, streamAction, me, user]);
+  }, [user?.id, hasMe, sendHeartbeat]);
+
+  // Kamera/mikrofon/ekran/el durumu değişince hemen bildir.
+  useEffect(() => {
+    if (!user?.id || !hasMe) return;
+    sendHeartbeat();
+  }, [user?.id, hasMe, camOn, micOn, handRaised, engine.mediaKind, engine.screenStream, sendHeartbeat]);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 1000);
@@ -331,7 +362,8 @@ export function LiveStudio() {
       chatLocked: stream.chatLocked,
       guestLimit: stream.guestLimit,
     });
-  }, [stream?.id, stream]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream?.id]);
 
   /* ---------------- actions ---------------- */
   const startBroadcast = async () => {
@@ -502,16 +534,34 @@ export function LiveStudio() {
   const onStageGuest = me?.role === "guest" && me.status === "live";
   const isMod = user?.role === "moderator";
 
-  /* Sahneye alınan konuk kamerasını açar (yüzünü göstermek istemiyorsa kapalı kalır).
-     Moderatör sohbeti yönetmek için katılır; kamera açmaz. */
+  /* Moderatör (yayını sunan kişi) canlı yayın varken kamerasını otomatik açar (mikrofon kapalı başlar).
+     Sahneye alınan konuk kamerasını açar (yüzünü göstermek istemiyorsa kapalı kalır).
+     Yenilemeden sonra yayıncı kamerası kendiliğinden geri gelir. */
+  const streamLive = stream?.status === "live";
+  const resumedRef = useRef(false);
   useEffect(() => {
-    if (!user || isHost) return;
-    if (onStageGuest) {
+    if (!user) return;
+    if (isHost) {
+      if (!streamLive) {
+        resumedRef.current = false;
+        return;
+      }
+      if (resumedRef.current || engine.mediaKind !== "off") return;
+      resumedRef.current = true;
+      void engine.setMedia("camera").then(() => {
+        setCamOn(true);
+        setMicOn(true);
+      });
+      return;
+    }
+    const wantsMedia = (isMod && streamLive) || onStageGuest;
+    if (wantsMedia) {
       if (autoMediaRef.current) return;
       autoMediaRef.current = true;
-      void engine.setMedia("camera", { videoOff: guestCamOff }).then(() => {
-        setCamOn(!guestCamOff);
-        setMicOn(true);
+      const videoOff = !isMod && guestCamOff;
+      void engine.setMedia("camera", { muted: isMod, videoOff }).then(() => {
+        setCamOn(!videoOff);
+        setMicOn(!isMod);
       });
     } else if (autoMediaRef.current) {
       autoMediaRef.current = false;
@@ -520,7 +570,14 @@ export function LiveStudio() {
       setMicOn(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, isHost, onStageGuest, guestCamOff]);
+  }, [user?.id, isHost, isMod, streamLive, onStageGuest, guestCamOff]);
+
+  /** Ekran düzeni: yayıncı/moderatör popup'a çift tıklayınca herkes için değişir (Realtime). */
+  const setFocus = async (focus: "screen" | "mod" | "host") => {
+    if (!isStaff) return;
+    setStream((prev) => (prev ? { ...prev, stageLayout: focus } : prev));
+    await streamAction({ action: "layout", focus });
+  };
 
   const submitRename = async () => {
     setRenameError(null);
@@ -603,9 +660,9 @@ export function LiveStudio() {
   }
 
   const hostP = participants.find((p) => p.role === "host" && p.status === "live");
-  const canPublish = isHost || onStageGuest;
+  const canPublish = isHost || isMod || onStageGuest;
   const showPip = !isHost && onStageGuest;
-  const stageOthers = liveOthers.filter((p) => p.role === "guest" || p.role === "moderator");
+  const stageOthers = liveOthers.filter((p) => p.role === "guest");
 
   return (
     <div className="mx-auto grid max-w-[1560px] gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_390px] lg:p-5">
@@ -766,18 +823,63 @@ export function LiveStudio() {
         <div className="rounded-3xl border border-white/10 bg-black/40 p-3">
           {(() => {
             const live = stream?.status === "live";
-            const hostCamStream = isHost ? engine.localStream : hostP ? (engine.remoteStreams[hostP.userId] ?? null) : null;
-            const hostCamOn = isHost ? engine.mediaKind !== "off" && camOn : Boolean(hostP?.cameraOn);
-            const screenStream = isHost ? engine.screenStream : hostP ? (engine.remoteScreens[hostP.userId] ?? null) : null;
             const hostName = isHost ? user.nickname : (hostP?.nickname ?? stream?.hostNickname ?? "Yayıncı");
-            const camFallback = (
-              <div className="flex flex-col items-center gap-2">
-                <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-2xl font-bold">
-                  {hostName.slice(0, 1).toUpperCase()}
+            const modP = participants.find((p) => p.role === "moderator" && p.status === "live" && p.cameraOn);
+            const iAmPresenter = Boolean(modP && modP.userId === user.id);
+
+            type Src = {
+              stream: MediaStream | null;
+              label: string;
+              fit: "cover" | "contain";
+              showVideo: boolean;
+              mirror: boolean;
+              muted: boolean;
+              fallback: React.ReactNode;
+            };
+            const avatar = (name: string) => (
+              <div className="flex flex-col items-center gap-1">
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-xl font-bold">
+                  {name.slice(0, 1).toUpperCase()}
                 </span>
-                <span className="text-xs">Kamera kapalı</span>
+                <span className="text-[11px]">Kamera kapalı</span>
               </div>
             );
+
+            const sources: Partial<Record<"screen" | "mod" | "host", Src>> = {};
+            const screenStream = isHost ? engine.screenStream : hostP ? (engine.remoteScreens[hostP.userId] ?? null) : null;
+            if (screenStream) {
+              sources.screen = {
+                stream: screenStream,
+                label: "🎮 Canlı Ekran (oyun / maç)",
+                fit: "contain",
+                showVideo: true,
+                mirror: false,
+                muted: isHost,
+                fallback: <span className="text-sm">Ekran yükleniyor...</span>,
+              };
+            }
+            if (modP) {
+              sources.mod = {
+                stream: iAmPresenter ? engine.localStream : (engine.remoteStreams[modP.userId] ?? null),
+                label: `🛡 ${modP.nickname}`,
+                fit: "cover",
+                showVideo: iAmPresenter ? camOn && engine.mediaKind !== "off" : modP.cameraOn,
+                mirror: iAmPresenter,
+                muted: iAmPresenter,
+                fallback: avatar(modP.nickname),
+              };
+            }
+            if (isHost || hostP) {
+              sources.host = {
+                stream: isHost ? engine.localStream : (engine.remoteStreams[hostP!.userId] ?? null),
+                label: `${hostName} (yayıncı)`,
+                fit: "cover",
+                showVideo: isHost ? engine.mediaKind !== "off" && camOn : Boolean(hostP?.cameraOn),
+                mirror: isHost,
+                muted: isHost,
+                fallback: hostP || isHost ? avatar(hostName) : <span className="text-sm">Yayıncı bağlanıyor...</span>,
+              };
+            }
 
             if (!live) {
               return (
@@ -791,51 +893,58 @@ export function LiveStudio() {
               );
             }
 
-            // Ekran paylaşımı yoksa yayıncı kamerası tüm ekranı kaplar; varsa popup + ana ekran.
-            const camIsMain = swapStage || !screenStream;
-            const mainStream = camIsMain ? hostCamStream : screenStream;
-            const popStream = camIsMain ? screenStream : hostCamStream;
+            const available = (["screen", "mod", "host"] as const).filter((k) => sources[k]);
+            const defaultFocus = sources.screen ? "screen" : "host";
+            const stored = (stream?.stageLayout ?? "screen") as "screen" | "mod" | "host";
+            const focus = sources[stored] ? stored : defaultFocus;
+            const popups = available.filter((k) => k !== focus);
+            const main = sources[focus];
 
             return (
               <div className="relative">
                 <StageVideo
-                  stream={mainStream}
-                  muted={isHost}
-                  mirror={isHost && camIsMain}
-                  fit={camIsMain ? "cover" : "contain"}
-                  showVideo={camIsMain ? hostCamOn : true}
-                  fallback={
-                    camIsMain ? (
-                      hostP || isHost ? camFallback : <span className="text-sm">Yayıncı bağlanıyor...</span>
-                    ) : (
-                      <span className="text-sm">Ekran yükleniyor...</span>
-                    )
-                  }
+                  stream={main?.stream ?? null}
+                  muted={main?.muted}
+                  mirror={main?.mirror}
+                  fit={main?.fit ?? "cover"}
+                  showVideo={main?.showVideo ?? false}
+                  fallback={main?.fallback ?? <span className="text-sm">Yayıncı bağlanıyor...</span>}
+                  onDoubleClick={isStaff && focus !== defaultFocus ? () => void setFocus(defaultFocus) : undefined}
                   className="aspect-video rounded-2xl"
                 >
                   <span className="absolute bottom-3 left-3 rounded-lg bg-black/60 px-2.5 py-1 text-xs font-semibold">
-                    {camIsMain ? `${hostName} (canlı yayın)` : "🎮 Canlı Ekran"}
+                    {main?.label}
                   </span>
                 </StageVideo>
 
-                {screenStream && (
-                  <StageVideo
-                    stream={popStream}
-                    muted={isHost}
-                    mirror={isHost && !camIsMain}
-                    fit="cover"
-                    showVideo={camIsMain ? true : hostCamOn}
-                    fallback={camIsMain ? <span className="text-xs">Ekran</span> : camFallback}
-                    onDoubleClick={() => setSwapStage((v) => !v)}
-                    className="absolute left-3 top-3 z-10 aspect-video w-36 rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60 sm:w-56"
-                  >
-                    <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
-                      {camIsMain ? "🎮 Ekran" : hostName}
-                    </span>
-                    <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white/70">
-                      çift tıkla
-                    </span>
-                  </StageVideo>
+                {popups.length > 0 && (
+                  <div className="absolute left-3 top-3 z-10 flex flex-col gap-2">
+                    {popups.map((k) => {
+                      const src = sources[k]!;
+                      return (
+                        <StageVideo
+                          key={k}
+                          stream={src.stream}
+                          muted={src.muted}
+                          mirror={src.mirror}
+                          fit={src.fit}
+                          showVideo={src.showVideo}
+                          fallback={src.fallback}
+                          onDoubleClick={isStaff ? () => void setFocus(k) : undefined}
+                          className="aspect-video w-32 rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60 sm:w-52"
+                        >
+                          <span className="pointer-events-none absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
+                            {src.label}
+                          </span>
+                          {isStaff && (
+                            <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white/70">
+                              çift tıkla
+                            </span>
+                          )}
+                        </StageVideo>
+                      );
+                    })}
+                  </div>
                 )}
 
                 {showPip && (
@@ -854,8 +963,8 @@ export function LiveStudio() {
             );
           })()}
 
-          {/* Yayıncı: sahnedeki mod/konuk kameraları */}
-          {isHost && stageOthers.length > 0 && (
+          {/* Sahnedeki konuklar (yayıncı üzerinden herkese aktarılır) */}
+          {stageOthers.length > 0 && (
             <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {stageOthers.map((p) => (
                 <VideoTile
@@ -867,22 +976,9 @@ export function LiveStudio() {
                   micOn={p.micOn}
                   handRaised={p.handRaised}
                   accent="#a855f7"
-                  state={engine.peerStates[p.userId]}
+                  state={engine.peerStates[p.userId] ?? (isHost ? undefined : engine.peerStates[hostP?.userId ?? -1])}
                 />
               ))}
-            </div>
-          )}
-
-          {/* Diğerleri: sahnedeki konuklar (isim listesi) */}
-          {!isHost && stageOthers.some((p) => p.role === "guest") && (
-            <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              {stageOthers
-                .filter((p) => p.role === "guest")
-                .map((p) => (
-                  <span key={p.id} className="rounded-full bg-fuchsia-500/15 px-3 py-1.5 text-fuchsia-200">
-                    🎤 {p.nickname} {p.cameraOn ? "🎥" : "🚫"}
-                  </span>
-                ))}
             </div>
           )}
 

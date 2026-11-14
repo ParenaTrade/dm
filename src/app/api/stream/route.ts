@@ -46,6 +46,7 @@ type ActionBody = {
   as?: string;
   code?: string;
   participantId?: number;
+  focus?: string;
   patch?: Record<string, unknown>;
   settings?: Record<string, unknown>;
 };
@@ -161,7 +162,7 @@ export async function POST(request: Request) {
       if (!isHost) return Response.json({ ok: false, error: "Sadece yayıncı" }, { status: 403 });
       await db
         .update(streams)
-        .set({ status: "live", startedAt: new Date(), endedAt: null, hostNickname: user.nickname })
+        .set({ status: "live", startedAt: new Date(), endedAt: null, hostNickname: user.nickname, stageLayout: "screen" })
         .where(eq(streams.id, stream.id));
       if (mine) {
         await db
@@ -193,6 +194,12 @@ export async function POST(request: Request) {
         .where(eq(participants.streamId, stream.id));
       await db.delete(rtcSignals).where(eq(rtcSignals.streamId, stream.id));
       return Response.json({ ok: true });
+    }
+    case "layout": {
+      if (!isStaff) return Response.json({ ok: false, error: "Yetki yok" }, { status: 403 });
+      const focus = ["screen", "mod", "host"].includes(String(body.focus)) ? String(body.focus) : "screen";
+      await db.update(streams).set({ stageLayout: focus }).where(eq(streams.id, stream.id));
+      return Response.json({ ok: true, focus });
     }
     case "settings": {
       if (!isStaff) return Response.json({ ok: false, error: "Yetki yok" }, { status: 403 });

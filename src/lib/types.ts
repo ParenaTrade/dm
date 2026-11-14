@@ -7,6 +7,7 @@ export type StreamInfo = {
   chatLocked: boolean;
   slowModeSeconds: number;
   guestLimit: number;
+  stageLayout: string;
   hostNickname: string;
   startedAt: string | null;
 };

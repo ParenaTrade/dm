@@ -28,7 +28,8 @@ export type StreamBroadcast =
   | { type: "chat:update"; ids: number[]; patch: { status?: string; isPinned?: boolean } }
   | { type: "chat:clear" }
   | { type: "signal"; from: number; to: number | null; kind: string; body: string }
-  | { type: "stage"; text: string };
+  | { type: "stage"; text: string }
+  | { type: "state" };
 
 export type PresencePayload = { userId: number; nickname: string; role: string; stage: boolean };
 

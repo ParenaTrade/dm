@@ -20,6 +20,7 @@ create table if not exists public.users (
   created_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now()
 );
+alter table public.streams add column if not exists stage_layout text not null default 'screen';
 alter table public.users add column if not exists email text;
 alter table public.users add column if not exists avatar_url text;
 alter table public.users add column if not exists full_name text;

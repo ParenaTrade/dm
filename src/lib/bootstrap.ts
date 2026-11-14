@@ -23,6 +23,7 @@ const DDL = [
     created_at timestamptz NOT NULL DEFAULT now(),
     last_seen_at timestamptz NOT NULL DEFAULT now()
   )`,
+  sql`ALTER TABLE streams ADD COLUMN IF NOT EXISTS stage_layout text NOT NULL DEFAULT 'screen'`,
   sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email text`,
   sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text`,
   sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name text`,
