@@ -17,6 +17,7 @@ export const users = pgTable(
     nickname: text("nickname").notNull(),
     nicknameLower: text("nickname_lower").notNull(),
     email: text("email"),
+    fullName: text("full_name"),
     avatarUrl: text("avatar_url"),
     role: text("role").notNull().default("viewer"), // host | moderator | viewer (guest = sahne koltuğu, katılımcı tablosunda)
     accent: text("accent").notNull().default("#a855f7"),

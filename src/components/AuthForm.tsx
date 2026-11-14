@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   authConfigured,
   checkEmail,
+  checkNickname,
   exchangeSession,
   resendConfirmation,
   signInWithEmail,
@@ -22,6 +23,7 @@ export function AuthForm({ onDone }: { onDone: (user: AppUser) => void }) {
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [nickname, setNickname] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -44,16 +46,38 @@ export function AuthForm({ onDone }: { onDone: (user: AppUser) => void }) {
     const exists = await checkEmail(cleanEmail);
     setBusy(false);
     setStep(exists === false ? "register" : "login");
-    if (exists === false) setInfo("Bu e-posta ile kayıt bulunamadı. Kayıt formunu doldur.");
+    if (exists === false) setInfo("Bu e-posta için kayıt görünmüyor. Daha önce kayıt olduysan aşağıdan \"giriş yap\"a tıkla, yoksa formu doldur.");
   };
 
   const register = async () => {
     setError(null);
     if (name.trim().length < 3 || !name.trim().includes(" ")) return fail("Ad ve soyadını birlikte yaz.");
+    const nick = nickname.trim();
+    if (nick.length < 3 || nick.length > 20 || nick.includes("@")) {
+      return fail("Rumuz 3-20 karakter olmalı ve @ içermemeli.");
+    }
     if (password.length < 8) return fail("Şifre en az 8 karakter olmalı.");
     setBusy(true);
-    const res = await signUpWithEmail({ name: name.trim(), email: cleanEmail, password });
-    if (res.error) return fail(res.error);
+    if ((await checkNickname(nick)) === true) return fail("Bu rumuz kullanılıyor, başka bir rumuz seç.");
+    // Hesap Supabase'de zaten varsa (uygulamaya henüz girmemiş olabilir) önce giriş dene.
+    const existing = await signInWithEmail(cleanEmail, password);
+    if (existing.ok) return void (await finish());
+    if (existing.unconfirmed) {
+      setBusy(false);
+      setStep("sent");
+      return;
+    }
+    const res = await signUpWithEmail({ name: name.trim(), nickname: nick, email: cleanEmail, password });
+    if (res.error) {
+      if (res.error.includes("zaten kayıt")) {
+        setBusy(false);
+        setStep("login");
+        setPassword("");
+        setInfo("Bu e-posta zaten kayıtlı. Şifrenle giriş yap.");
+        return;
+      }
+      return fail(res.error);
+    }
     if (res.needsConfirm) {
       setBusy(false);
       setStep("sent");
@@ -138,13 +162,22 @@ export function AuthForm({ onDone }: { onDone: (user: AppUser) => void }) {
           />
 
           {step === "register" && (
-            <input
-              autoComplete="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ad Soyad"
-              className={input}
-            />
+            <>
+              <input
+                autoComplete="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ad Soyad (gizli kalır)"
+                className={input}
+              />
+              <input
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                maxLength={20}
+                placeholder="Rumuz (sohbette herkes bunu görür)"
+                className={input}
+              />
+            </>
           )}
 
           {step !== "email" && (

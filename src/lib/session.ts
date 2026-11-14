@@ -42,17 +42,36 @@ export function adminEmails(): string[] {
     .filter(Boolean);
 }
 
-/** E-posta ile kayıtlı (onaylı) kullanıcıyı oluşturur/günceller; rolü e-postadan türetir. */
+const RESERVED_NICKS = ["admin", "yönetici", "yayıncı", "moderatör", "moderator", "berkbey", "berk bey", "sistem"];
+
+export function validateNickname(raw: string): string | null {
+  const nick = normalizeNickname(raw);
+  if (nick.length < 3) return "Rumuz en az 3 karakter olmalı.";
+  if (nick.includes("@")) return "Rumuz @ içeremez.";
+  return null;
+}
+
+export function isReservedNickname(raw: string) {
+  return RESERVED_NICKS.includes(normalizeNickname(raw).toLocaleLowerCase("tr"));
+}
+
+export async function isNicknameTaken(nickname: string, exceptUserId?: number) {
+  const lower = normalizeNickname(nickname).toLocaleLowerCase("tr");
+  const rows = await db.select({ id: users.id }).from(users).where(eq(users.nicknameLower, lower)).limit(2);
+  return rows.some((row) => row.id !== exceptUserId);
+}
+
+/** E-posta ile kayıtlı (onaylı) kullanıcıyı oluşturur/günceller; rolü e-postadan türetir.
+ *  Herkese görünen ad "rumuz"dur; ad soyad ve e-posta yalnızca admin/moderatör panelinde görünür. */
 export async function upsertAuthUser(profile: {
   email: string;
   name: string;
+  nickname?: string;
   avatarUrl: string | null;
 }): Promise<DbUser> {
   const email = profile.email.trim().toLowerCase();
-  const fallback = email.split("@")[0];
-  const nickname = normalizeNickname(profile.name) || normalizeNickname(fallback) || "Konuk";
-  const lower = nickname.toLocaleLowerCase("tr");
   const accent = ACCENTS[Math.abs(hashCode(email)) % ACCENTS.length];
+  const fullName = normalizeNickname(profile.name) || null;
 
   let role = "viewer";
   if (adminEmails().includes(email)) {
@@ -71,8 +90,7 @@ export async function upsertAuthUser(profile: {
     const updated = await db
       .update(users)
       .set({
-        nickname,
-        nicknameLower: lower,
+        fullName: fullName ?? existing[0].fullName,
         avatarUrl: profile.avatarUrl,
         role,
         isVip: role === "host" ? true : existing[0].isVip,
@@ -83,12 +101,22 @@ export async function upsertAuthUser(profile: {
     return updated[0];
   }
 
+  // Yeni kullanıcı: rumuz kayıt formundan gelir; yoksa rastgele "Üye1234"
+  let nickname = normalizeNickname(profile.nickname ?? "");
+  if (!nickname || validateNickname(nickname) || (isReservedNickname(nickname) && role === "viewer")) {
+    nickname = `Üye${Math.floor(1000 + Math.random() * 9000)}`;
+  }
+  while (await isNicknameTaken(nickname)) {
+    nickname = `${nickname.slice(0, 16)}${Math.floor(10 + Math.random() * 90)}`;
+  }
+
   const inserted = await db
     .insert(users)
     .values({
       nickname,
-      nicknameLower: lower,
+      nicknameLower: nickname.toLocaleLowerCase("tr"),
       email,
+      fullName,
       avatarUrl: profile.avatarUrl,
       role,
       accent,

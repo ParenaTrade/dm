@@ -10,6 +10,7 @@ import { ROLE_LABELS, roleBadgeClass, type AppUser, type ChatMessageInfo, type M
 type PanelUser = {
   id: number;
   email: string;
+  fullName: string;
   nickname: string;
   role: string;
   mutedUntil: string | null;
@@ -252,7 +253,7 @@ export function PanelClient() {
                         {ROLE_LABELS[u.role] ?? u.role}
                       </span>
                       <span className="font-semibold">{u.nickname}</span>
-                      <span className="text-xs text-white/40">{u.email}</span>
+                      <span className="text-xs text-white/40">{u.fullName ? `${u.fullName} · ` : ""}{u.email}</span>
                       <span className="text-xs text-white/40">{u.messageCount} mesaj</span>
                       {muted && <span className="rounded-md bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-300">SUSTURULMUŞ</span>}
                       {banned && <span className="rounded-md bg-red-500/20 px-2 py-0.5 text-[10px] text-red-300">UZAKLAŞTIRILMIŞ</span>}

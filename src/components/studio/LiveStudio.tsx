@@ -5,9 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatPanel } from "./ChatPanel";
 import { VideoTile } from "./VideoTile";
 import { SelfPip } from "./SelfPip";
+import { StageVideo } from "./StageVideo";
 import { SystemStatusButton } from "../SystemStatusButton";
 import { AuthForm } from "../AuthForm";
-import { exchangeSession, signOutAuth } from "@/lib/auth-client";
+import { exchangeSession, getSessionEmail, onAuthChange, renameNickname, signOutAuth } from "@/lib/auth-client";
 import { useLiveEngine } from "./useLiveEngine";
 import {
   joinStreamChannel,
@@ -34,6 +35,10 @@ export function LiveStudio() {
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
   const [roomOpen, setRoomOpen] = useState(false);
+  const [swapStage, setSwapStage] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [stream, setStream] = useState<StreamInfo | null>(null);
@@ -112,6 +117,15 @@ export function LiveStudio() {
         const res = await fetch("/api/auth", { cache: "no-store" });
         const data = await res.json();
         if (data.user) {
+          // Aynı tarayıcıda başka hesapla girilmişse (Supabase oturumu farklıysa) güncel hesaba geç.
+          const sessionEmail = await getSessionEmail();
+          if (sessionEmail && sessionEmail !== String(data.user.email).toLowerCase()) {
+            const swapped = await exchangeSession();
+            if (!cancelled && swapped?.user) {
+              setUser(swapped.user);
+              return;
+            }
+          }
           if (!cancelled) setUser(data.user as AppUser);
           return;
         }
@@ -130,6 +144,30 @@ export function LiveStudio() {
     };
   }, []);
 
+  /* Başka sekmede hesap değişirse bu sekme de aynı hesaba geçsin (rol karışmasın). */
+  useEffect(() => {
+    return onAuthChange((event, email) => {
+      const current = userRef.current;
+      if (event === "SIGNED_OUT") {
+        if (current) {
+          void fetch("/api/auth", { method: "DELETE" });
+          setUser(null);
+          setMe(null);
+        }
+        return;
+      }
+      if (email && current && email !== current.email.toLowerCase()) {
+        void exchangeSession().then((res) => {
+          if (res?.user) {
+            autoMediaRef.current = false;
+            setUser(res.user);
+            setMe(null);
+          }
+        });
+      }
+    });
+  }, []);
+
   /* Giriş ekranında aktif yayın odasını göster */
   useEffect(() => {
     if (user || authLoading) return;
@@ -140,6 +178,7 @@ export function LiveStudio() {
   }, [user, authLoading]);
 
   const logout = async () => {
+    engine.stopScreen();
     await engine.setMedia("off");
     await fetch("/api/auth", { method: "DELETE" });
     await signOutAuth();
@@ -270,12 +309,12 @@ export function LiveStudio() {
           cameraOn: engine.mediaKind !== "off" && camOn,
           micOn,
           handRaised,
-          isScreenSharing: engine.mediaKind === "screen",
+          isScreenSharing: Boolean(engine.screenStream),
         },
       });
     }, 5000);
     return () => clearInterval(timer);
-  }, [user?.id, me?.id, engine.mediaKind, camOn, micOn, handRaised, streamAction, me, user]);
+  }, [user?.id, me?.id, engine.mediaKind, engine.screenStream, camOn, micOn, handRaised, streamAction, me, user]);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 1000);
@@ -307,6 +346,7 @@ export function LiveStudio() {
 
   const stopBroadcast = async () => {
     await streamAction({ action: "stop" });
+    engine.stopScreen();
     await engine.setMedia("off");
     setCamOn(false);
     setMicOn(false);
@@ -462,16 +502,16 @@ export function LiveStudio() {
   const onStageGuest = me?.role === "guest" && me.status === "live";
   const isMod = user?.role === "moderator";
 
-  /* Moderatör girişinde kamera otomatik açılır (mikrofon kapalı); sahneye alınan konuk da kamerasını açar. */
+  /* Sahneye alınan konuk kamerasını açar (yüzünü göstermek istemiyorsa kapalı kalır).
+     Moderatör sohbeti yönetmek için katılır; kamera açmaz. */
   useEffect(() => {
     if (!user || isHost) return;
-    if (isMod || onStageGuest) {
+    if (onStageGuest) {
       if (autoMediaRef.current) return;
       autoMediaRef.current = true;
-      const videoOff = !isMod && guestCamOff;
-      void engine.setMedia("camera", { muted: isMod, videoOff }).then(() => {
-        setCamOn(!videoOff);
-        setMicOn(!isMod);
+      void engine.setMedia("camera", { videoOff: guestCamOff }).then(() => {
+        setCamOn(!guestCamOff);
+        setMicOn(true);
       });
     } else if (autoMediaRef.current) {
       autoMediaRef.current = false;
@@ -480,7 +520,16 @@ export function LiveStudio() {
       setMicOn(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, isHost, isMod, onStageGuest, guestCamOff]);
+  }, [user, isHost, onStageGuest, guestCamOff]);
+
+  const submitRename = async () => {
+    setRenameError(null);
+    const res = await renameNickname(renameValue);
+    if (res.error) return setRenameError(res.error);
+    if (res.user) setUser(res.user);
+    setRenameOpen(false);
+    setNotice("Rumuzun güncellendi.");
+  };
 
   const toggleMic = () => {
     if (engine.mediaKind === "off") {
@@ -554,8 +603,8 @@ export function LiveStudio() {
   }
 
   const hostP = participants.find((p) => p.role === "host" && p.status === "live");
-  const canPublish = isHost || isMod || onStageGuest;
-  const showPip = !isHost && (isMod || onStageGuest);
+  const canPublish = isHost || onStageGuest;
+  const showPip = !isHost && onStageGuest;
   const stageOthers = liveOthers.filter((p) => p.role === "guest" || p.role === "moderator");
 
   return (
@@ -604,9 +653,17 @@ export function LiveStudio() {
             ) : (
               <SystemStatusButton />
             )}
-            <span className={`rounded-full px-3 py-1.5 ring-1 ${isStaff ? "bg-cyan-500/20 text-cyan-200 ring-cyan-400/40" : "bg-white/10 text-white/60"}`}>
-              {isHost ? "Yayıncı" : isMod ? "Moderatör" : me?.role === "guest" ? "Konuk" : "İzleyici"} · {user.nickname}
-            </span>
+            <button
+              onClick={() => {
+                setRenameValue(user.nickname);
+                setRenameError(null);
+                setRenameOpen(true);
+              }}
+              title="Rumuzunu değiştir"
+              className={`rounded-full px-3 py-1.5 ring-1 ${isStaff ? "bg-cyan-500/20 text-cyan-200 ring-cyan-400/40" : "bg-white/10 text-white/60"}`}
+            >
+              {isHost ? "Yayıncı" : isMod ? "Moderatör" : me?.role === "guest" ? "Konuk" : "İzleyici"} · {user.nickname} ✎
+            </button>
             {isStaff && (
               <button onClick={() => setShowSettings((v) => !v)} className="btn-ghost rounded-full px-3 py-1.5">
                 ⚙ Ayarlar
@@ -705,49 +762,97 @@ export function LiveStudio() {
           </div>
         )}
 
-        {/* STAGE: ana ekran = canlı yayın görüntüsü; mod/konuk kamerası sol üstte küçük kare */}
+        {/* STAGE: ana ekran = oyun/maç/ekran yayını; yayıncı yüzü sol üstte küçük popup (çift tıkla: ekranı doldurur) */}
         <div className="rounded-3xl border border-white/10 bg-black/40 p-3">
-          <div className="relative">
-            {isHost ? (
-              <VideoTile
-                stream={engine.localStream}
-                label={`${user.nickname} (canlı yayın)`}
-                role="host"
-                muted
-                isLocal
-                cameraOn={engine.mediaKind !== "off" && camOn}
-                micOn={micOn}
-                accent={user.accent}
-              />
-            ) : hostP ? (
-              <VideoTile
-                stream={engine.remoteStreams[hostP.userId] ?? null}
-                label={hostP.nickname}
-                role="host"
-                cameraOn={hostP.cameraOn}
-                micOn={hostP.micOn}
-                accent="#f5c542"
-                state={engine.peerStates[hostP.userId]}
-              />
-            ) : (
-              <div className="flex aspect-video items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br from-ink3 to-ink text-center text-sm text-white/55">
-                {stream?.status === "live" ? "Yayıncı bağlanıyor..." : "Yayın henüz başlamadı. Başlayınca burada görünecek."}
+          {(() => {
+            const live = stream?.status === "live";
+            const hostCamStream = isHost ? engine.localStream : hostP ? (engine.remoteStreams[hostP.userId] ?? null) : null;
+            const hostCamOn = isHost ? engine.mediaKind !== "off" && camOn : Boolean(hostP?.cameraOn);
+            const screenStream = isHost ? engine.screenStream : hostP ? (engine.remoteScreens[hostP.userId] ?? null) : null;
+            const hostName = isHost ? user.nickname : (hostP?.nickname ?? stream?.hostNickname ?? "Yayıncı");
+            const camFallback = (
+              <div className="flex flex-col items-center gap-2">
+                <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-2xl font-bold">
+                  {hostName.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="text-xs">Kamera kapalı</span>
               </div>
-            )}
+            );
 
-            {showPip && (
-              <SelfPip
-                stream={engine.localStream}
-                label={user.nickname}
-                camOn={camOn}
-                micOn={micOn}
-                mediaOff={engine.mediaKind === "off"}
-                onToggleCam={toggleCam}
-                onToggleMic={toggleMic}
-                onStart={toggleCam}
-              />
-            )}
-          </div>
+            if (!live) {
+              return (
+                <div className="flex aspect-video flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-gradient-to-br from-ink3 to-ink text-center">
+                  <span className="text-5xl">📴</span>
+                  <p className="font-display text-3xl text-white/80">Yayın Kapalı</p>
+                  <p className="text-sm text-white/45">
+                    {isHost ? "Yayını Başlat'a bas." : "Yayın başlayınca burada görünecek."}
+                  </p>
+                </div>
+              );
+            }
+
+            // Ekran paylaşımı yoksa yayıncı kamerası tüm ekranı kaplar; varsa popup + ana ekran.
+            const camIsMain = swapStage || !screenStream;
+            const mainStream = camIsMain ? hostCamStream : screenStream;
+            const popStream = camIsMain ? screenStream : hostCamStream;
+
+            return (
+              <div className="relative">
+                <StageVideo
+                  stream={mainStream}
+                  muted={isHost}
+                  mirror={isHost && camIsMain}
+                  fit={camIsMain ? "cover" : "contain"}
+                  showVideo={camIsMain ? hostCamOn : true}
+                  fallback={
+                    camIsMain ? (
+                      hostP || isHost ? camFallback : <span className="text-sm">Yayıncı bağlanıyor...</span>
+                    ) : (
+                      <span className="text-sm">Ekran yükleniyor...</span>
+                    )
+                  }
+                  className="aspect-video rounded-2xl"
+                >
+                  <span className="absolute bottom-3 left-3 rounded-lg bg-black/60 px-2.5 py-1 text-xs font-semibold">
+                    {camIsMain ? `${hostName} (canlı yayın)` : "🎮 Canlı Ekran"}
+                  </span>
+                </StageVideo>
+
+                {screenStream && (
+                  <StageVideo
+                    stream={popStream}
+                    muted={isHost}
+                    mirror={isHost && !camIsMain}
+                    fit="cover"
+                    showVideo={camIsMain ? true : hostCamOn}
+                    fallback={camIsMain ? <span className="text-xs">Ekran</span> : camFallback}
+                    onDoubleClick={() => setSwapStage((v) => !v)}
+                    className="absolute left-3 top-3 z-10 aspect-video w-36 rounded-xl border-2 border-gold/60 shadow-xl shadow-black/60 sm:w-56"
+                  >
+                    <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px]">
+                      {camIsMain ? "🎮 Ekran" : hostName}
+                    </span>
+                    <span className="pointer-events-none absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white/70">
+                      çift tıkla
+                    </span>
+                  </StageVideo>
+                )}
+
+                {showPip && (
+                  <SelfPip
+                    stream={engine.localStream}
+                    label={user.nickname}
+                    camOn={camOn}
+                    micOn={micOn}
+                    mediaOff={engine.mediaKind === "off"}
+                    onToggleCam={toggleCam}
+                    onToggleMic={toggleMic}
+                    onStart={toggleCam}
+                  />
+                )}
+              </div>
+            );
+          })()}
 
           {/* Yayıncı: sahnedeki mod/konuk kameraları */}
           {isHost && stageOthers.length > 0 && (
@@ -862,12 +967,12 @@ export function LiveStudio() {
             </>
           )}
 
-          {(isHost || onStageGuest) && (
+          {isHost && (
             <button
-              onClick={() => void engine.setMedia(engine.mediaKind === "screen" ? "camera" : "screen")}
-              className="btn-ghost rounded-xl px-4 py-2.5 text-sm"
+              onClick={() => void (engine.screenStream ? engine.stopScreen() : engine.startScreen())}
+              className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${engine.screenStream ? "text-emerald-300" : ""}`}
             >
-              {engine.mediaKind === "screen" ? "🖥 Ekranı Kapat" : "🖥 Ekran Paylaş"}
+              {engine.screenStream ? "🎮 Ekran Paylaşımını Durdur" : "🎮 Oyun / Maç / Ekran Paylaş"}
             </button>
           )}
 
@@ -904,13 +1009,40 @@ export function LiveStudio() {
           )}
         </div>
 
+        {/* RENAME DIALOG */}
+        {renameOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <div className="glass neon-ring w-full max-w-sm rounded-3xl p-6">
+              <p className="font-display text-2xl text-gold">Rumuz</p>
+              <p className="mt-2 text-sm text-white/60">
+                Sohbette ve izleyici listesinde yalnızca rumuzun görünür. Ad soyadın ve e-postan gizli kalır.
+              </p>
+              <input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                maxLength={20}
+                className="mt-4 w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm outline-none focus:border-gold/60"
+              />
+              {renameError && <p className="mt-2 text-sm text-red-300">{renameError}</p>}
+              <div className="mt-4 flex gap-2">
+                <button onClick={() => void submitRename()} className="btn-gold flex-1 rounded-xl py-3 font-bold">
+                  Kaydet
+                </button>
+                <button onClick={() => setRenameOpen(false)} className="btn-ghost rounded-xl px-5 py-3">
+                  Vazgeç
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* GUEST DIALOG */}
         {guestDialog && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
             <div className="glass neon-ring w-full max-w-sm rounded-3xl p-6">
               <p className="font-display text-2xl text-gold">Konuk Ol</p>
               <p className="mt-2 text-sm text-white/60">
-                Hesabınla ({user.email}) konuk isteği gönderirsin. Onaylanınca sahneye alınırsın.
+                Rumuzunla ({user.nickname}) konuk isteği gönderirsin. Onaylanınca sahneye alınırsın.
               </p>
               <label className="mt-4 flex items-center gap-2 text-sm">
                 <input

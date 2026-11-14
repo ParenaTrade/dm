@@ -22,6 +22,7 @@ create table if not exists public.users (
 );
 alter table public.users add column if not exists email text;
 alter table public.users add column if not exists avatar_url text;
+alter table public.users add column if not exists full_name text;
 drop index if exists public.users_nickname_lower_idx;
 create index if not exists users_nickname_idx on public.users (nickname_lower);
 create unique index if not exists users_email_idx on public.users (email);

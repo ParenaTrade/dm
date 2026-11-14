@@ -24,7 +24,7 @@ export type EngineState = {
   localStream: MediaStream | null;
   remoteStreams: Record<number, MediaStream>;
   peerStates: Record<number, RTCPeerConnectionState>;
-  mediaKind: "off" | "camera" | "screen";
+  mediaKind: "off" | "camera";
   error: string | null;
 };
 
@@ -60,7 +60,9 @@ export function useLiveEngine(params: {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Record<number, MediaStream>>({});
   const [peerStates, setPeerStates] = useState<Record<number, RTCPeerConnectionState>>({});
-  const [mediaKind, setMediaKind] = useState<"off" | "camera" | "screen">("off");
+  const [mediaKind, setMediaKind] = useState<"off" | "camera">("off");
+  const [localScreen, setLocalScreen] = useState<MediaStream | null>(null);
+  const [remoteScreens, setRemoteScreens] = useState<Record<number, MediaStream>>({});
   const [error, setError] = useState<string | null>(null);
 
   const peers = useRef(new Map<number, PeerCtx>());
@@ -70,6 +72,10 @@ export function useLiveEngine(params: {
   const flushing = useRef(false);
   const localStreamRef = useRef<MediaStream | null>(null);
   const silentTrack = useRef<MediaStreamTrack | null>(null);
+  const localScreenRef = useRef<MediaStream | null>(null);
+  const screenSenders = useRef(new Map<number, RTCRtpSender[]>());
+  const incoming = useRef(new Map<number, Map<string, MediaStream>>());
+  const screenMeta = useRef(new Map<number, string | null>());
   const paramsRef = useRef({ streamId, userId, isHost, active, realtimeMode });
   paramsRef.current = { streamId, userId, isHost, active, realtimeMode };
 
@@ -103,13 +109,18 @@ export function useLiveEngine(params: {
     }
   }, []);
 
+  const isScreenSender = (remoteId: number, sender: RTCRtpSender) =>
+    (screenSenders.current.get(remoteId) ?? []).includes(sender);
+
   const attachLocalTracks = useCallback((ctx: PeerCtx) => {
     const stream = localStreamRef.current;
     const kinds = new Set<string>();
     if (stream) {
       for (const track of stream.getTracks()) {
         kinds.add(track.kind);
-        const sender = ctx.pc.getSenders().find((s) => s.track?.kind === track.kind);
+        const sender = ctx.pc
+          .getSenders()
+          .find((s) => s.track?.kind === track.kind && !isScreenSender(ctx.remoteId, s));
         if (sender) {
           sender.replaceTrack(track).catch(() => undefined);
         } else {
@@ -121,10 +132,61 @@ export function useLiveEngine(params: {
     if (!kinds.has("audio")) {
       if (!silentTrack.current) silentTrack.current = createSilentAudioTrack();
       const track = silentTrack.current;
-      const sender = ctx.pc.getSenders().find((s) => s.track?.kind === "audio");
+      const sender = ctx.pc.getSenders().find((s) => s.track?.kind === "audio" && !isScreenSender(ctx.remoteId, s));
       if (sender && track) sender.replaceTrack(track).catch(() => undefined);
       else if (track) ctx.pc.addTrack(track, stream ?? new MediaStream([track]));
     }
+  }, []);
+
+  /** Yayıncı: ekran/oyun akışını (ayrı video) bu bağlantıya ekle veya kaldır. */
+  const attachScreen = useCallback(
+    (ctx: PeerCtx) => {
+      const screen = localScreenRef.current;
+      const old = screenSenders.current.get(ctx.remoteId) ?? [];
+      if (!screen) {
+        for (const sender of old) {
+          try {
+            ctx.pc.removeTrack(sender);
+          } catch {
+            /* noop */
+          }
+        }
+        screenSenders.current.delete(ctx.remoteId);
+      } else if (!old.length) {
+        const senders = screen.getTracks().map((track) => ctx.pc.addTrack(track, screen));
+        screenSenders.current.set(ctx.remoteId, senders);
+      }
+      queue({ to: ctx.remoteId, kind: "meta", body: JSON.stringify({ screenId: screen?.id ?? null }) });
+    },
+    [queue],
+  );
+
+  /** İzleyici: gelen akışları kamera ve ekran olarak ayır (meta sinyaline göre). */
+  const publishRemote = useCallback((remoteId: number) => {
+    const map = incoming.current.get(remoteId);
+    if (!map) return;
+    const screenId = screenMeta.current.get(remoteId);
+    const streams = Array.from(map.values());
+    let camera: MediaStream | undefined;
+    let screen: MediaStream | undefined;
+    if (typeof screenId === "string") {
+      screen = map.get(screenId);
+      camera = streams.find((st) => st.id !== screenId);
+    } else {
+      camera = streams[0];
+      if (screenId === null && streams.length > 1 && camera) {
+        map.clear();
+        map.set(camera.id, camera);
+      }
+    }
+    if (camera) setRemoteStreams((prev) => (prev[remoteId] === camera ? prev : { ...prev, [remoteId]: camera }));
+    setRemoteScreens((prev) => {
+      if (screen) return prev[remoteId] === screen ? prev : { ...prev, [remoteId]: screen };
+      if (!(remoteId in prev)) return prev;
+      const next = { ...prev };
+      delete next[remoteId];
+      return next;
+    });
   }, []);
 
   const ensurePeer = useCallback(
@@ -164,7 +226,13 @@ export function useLiveEngine(params: {
 
       pc.ontrack = (event) => {
         const stream = event.streams[0] ?? new MediaStream([event.track]);
-        setRemoteStreams((prev) => ({ ...prev, [remoteId]: stream }));
+        let map = incoming.current.get(remoteId);
+        if (!map) {
+          map = new Map();
+          incoming.current.set(remoteId, map);
+        }
+        if (!map.has(stream.id)) map.set(stream.id, stream);
+        publishRemote(remoteId);
       };
 
       pc.onconnectionstatechange = () => {
@@ -177,9 +245,10 @@ export function useLiveEngine(params: {
 
       peers.current.set(remoteId, ctx);
       attachLocalTracks(ctx);
+      if (localScreenRef.current) attachScreen(ctx);
       return ctx;
     },
-    [attachLocalTracks, queue],
+    [attachLocalTracks, attachScreen, publishRemote, queue],
   );
 
   const closePeer = useCallback((remoteId: number) => {
@@ -194,6 +263,14 @@ export function useLiveEngine(params: {
       /* noop */
     }
     peers.current.delete(remoteId);
+    incoming.current.delete(remoteId);
+    screenMeta.current.delete(remoteId);
+    screenSenders.current.delete(remoteId);
+    setRemoteScreens((prev) => {
+      const next = { ...prev };
+      delete next[remoteId];
+      return next;
+    });
     setRemoteStreams((prev) => {
       const next = { ...prev };
       delete next[remoteId];
@@ -274,6 +351,16 @@ export function useLiveEngine(params: {
         return;
       }
       if (!body) return;
+      if (kind === "meta") {
+        try {
+          const meta = JSON.parse(body) as { screenId?: string | null };
+          screenMeta.current.set(from, meta.screenId ?? null);
+          publishRemote(from);
+        } catch {
+          /* noop */
+        }
+        return;
+      }
       try {
         const ctx = ensurePeer(from, !paramsRef.current.isHost);
         const payload = JSON.parse(body);
@@ -283,7 +370,7 @@ export function useLiveEngine(params: {
         /* bozuk sinyali yut */
       }
     },
-    [closePeer, ensurePeer, handleCandidate, handleDescription],
+    [closePeer, ensurePeer, handleCandidate, handleDescription, publishRemote],
   );
 
   const pollSignals = useCallback(async () => {
@@ -308,7 +395,7 @@ export function useLiveEngine(params: {
   }, [processSignal]);
 
   const setMedia = useCallback(
-    async (kind: "off" | "camera" | "screen", opts?: { muted?: boolean; videoOff?: boolean }) => {
+    async (kind: "off" | "camera", opts?: { muted?: boolean; videoOff?: boolean }) => {
       setError(null);
       try {
         if (kind === "off") {
@@ -320,38 +407,17 @@ export function useLiveEngine(params: {
           return;
         }
 
-        const stream =
-          kind === "screen"
-            ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
-            : await navigator.mediaDevices.getUserMedia({
-                video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-              });
-
-        if (kind === "camera") {
-          if (opts?.muted) stream.getAudioTracks().forEach((t) => (t.enabled = false));
-          if (opts?.videoOff) stream.getVideoTracks().forEach((t) => (t.enabled = false));
-        }
-
-        if (kind === "screen") {
-          stream.getVideoTracks()[0]?.addEventListener("ended", () => {
-            void setMedia("camera");
-          });
-        }
-
-        localStreamRef.current?.getTracks().forEach((track) => {
-          if (track.kind === "video") track.stop();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
+        if (opts?.muted) stream.getAudioTracks().forEach((t) => (t.enabled = false));
+        if (opts?.videoOff) stream.getVideoTracks().forEach((t) => (t.enabled = false));
 
-        const prevAudio = localStreamRef.current?.getAudioTracks().find((t) => !t.muted);
-        if (prevAudio) {
-          stream.getAudioTracks().forEach((track) => track.stop());
-          stream.addTrack(prevAudio);
-        }
-
+        localStreamRef.current?.getTracks().forEach((track) => track.stop());
         localStreamRef.current = stream;
         setLocalStream(stream);
-        setMediaKind(kind);
+        setMediaKind("camera");
         for (const [, ctx] of peers.current) attachLocalTracks(ctx);
       } catch (err) {
         setError(
@@ -363,6 +429,32 @@ export function useLiveEngine(params: {
     },
     [attachLocalTracks],
   );
+
+  const stopScreen = useCallback(() => {
+    localScreenRef.current?.getTracks().forEach((track) => track.stop());
+    localScreenRef.current = null;
+    setLocalScreen(null);
+    for (const [, ctx] of peers.current) attachScreen(ctx);
+  }, [attachScreen]);
+
+  /** Yayıncı: oyun / maç / ekran paylaşımı; kameradan bağımsız ikinci video olarak gider. */
+  const startScreen = useCallback(async () => {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
+      localScreenRef.current?.getTracks().forEach((track) => track.stop());
+      stream.getVideoTracks()[0]?.addEventListener("ended", () => stopScreen());
+      localScreenRef.current = stream;
+      setLocalScreen(stream);
+      for (const [, ctx] of peers.current) attachScreen(ctx);
+    } catch (err) {
+      setError(
+        err instanceof Error && err.name === "NotAllowedError"
+          ? "Ekran paylaşımı izni verilmedi."
+          : "Ekran paylaşımı başlatılamadı.",
+      );
+    }
+  }, [attachScreen, stopScreen]);
 
   const toggleAudio = useCallback(() => {
     const track = localStreamRef.current?.getAudioTracks()[0];
@@ -401,6 +493,7 @@ export function useLiveEngine(params: {
       }
       peers.current.clear();
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      localScreenRef.current?.getTracks().forEach((track) => track.stop());
       silentTrack.current?.stop();
       silentTrack.current = null;
     };
@@ -411,8 +504,12 @@ export function useLiveEngine(params: {
     remoteStreams,
     peerStates,
     mediaKind,
+    screenStream: localScreen,
+    remoteScreens,
     error,
     setMedia,
+    startScreen,
+    stopScreen,
     toggleAudio,
     toggleVideo,
     syncParticipants,

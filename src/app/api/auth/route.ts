@@ -1,7 +1,20 @@
 import { createClient } from "@supabase/supabase-js";
 import { ensureSeed } from "@/lib/seed";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "@/lib/supabase-server";
-import { createSession, destroySession, getCurrentUser, toCurrentUser, upsertAuthUser } from "@/lib/session";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { participants, users } from "@/db/schema";
+import {
+  createSession,
+  destroySession,
+  getCurrentUser,
+  isNicknameTaken,
+  isReservedNickname,
+  normalizeNickname,
+  toCurrentUser,
+  upsertAuthUser,
+  validateNickname,
+} from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,7 +52,8 @@ export async function POST(request: Request) {
   const name = String(meta.full_name ?? meta.name ?? "");  // kayıt formundaki Ad Soyad
   const avatar = String(meta.avatar_url ?? meta.picture ?? "") || null;
 
-  const user = await upsertAuthUser({ email: gUser.email, name, avatarUrl: avatar });
+  const nickname = String(meta.nickname ?? "");
+  const user = await upsertAuthUser({ email: gUser.email, name, nickname, avatarUrl: avatar });
   if (user.bannedUntil && user.bannedUntil.getTime() > Date.now()) {
     return Response.json({ ok: false, error: "Hesabınız yayından uzaklaştırılmış." }, { status: 403 });
   }
@@ -56,4 +70,27 @@ export async function DELETE() {
 export async function GET() {
   const user = await getCurrentUser();
   return Response.json({ ok: true, user, configured: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY) });
+}
+
+/** Rumuz değiştir (herkese görünen ad). */
+export async function PATCH(request: Request) {
+  const me = await getCurrentUser();
+  if (!me) return Response.json({ ok: false, error: "Oturum gerekli" }, { status: 401 });
+  const payload: { nickname?: string } = await request.json().catch(() => ({}));
+  const nickname = normalizeNickname(payload.nickname ?? "");
+  const invalid = validateNickname(nickname);
+  if (invalid) return Response.json({ ok: false, error: invalid }, { status: 400 });
+  if (me.role === "viewer" && isReservedNickname(nickname)) {
+    return Response.json({ ok: false, error: "Bu rumuz ayrılmış, başka bir rumuz seç." }, { status: 400 });
+  }
+  if (await isNicknameTaken(nickname, me.id)) {
+    return Response.json({ ok: false, error: "Bu rumuz kullanılıyor." }, { status: 409 });
+  }
+  const rows = await db
+    .update(users)
+    .set({ nickname, nicknameLower: nickname.toLocaleLowerCase("tr") })
+    .where(eq(users.id, me.id))
+    .returning();
+  await db.update(participants).set({ nickname }).where(eq(participants.userId, me.id));
+  return Response.json({ ok: true, user: toCurrentUser(rows[0]) });
 }

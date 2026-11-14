@@ -87,13 +87,15 @@ tıklayınca otomatik giriş yapılır. Onaylanmamış e-posta ile oturum açıl
 | Konuk | Kayıtlı herhangi bir hesap → `🎤 Konuk Ol` → admin/moderatör onaylar (kamera kapalı katılma seçeneği var) |
 | İzleyici | Diğer tüm kayıtlı hesaplar |
 
-## 6. Ekran davranışı
+## 6. Ekran davranışı (güncel)
 
-- Ana sahne ekranı canlı yayın görüntüsünü (yayıncı kamerası) gösterir.
-- Moderatör girişinde kamera otomatik açılır (mikrofon kapalı); görüntü sahne ekranının **sol üstünde küçük kare** olarak görünür.
-- Konuk sahneye alınınca aynı kare açılır; yüzünü göstermek istemeyen konuk kamerasını kapalı tutabilir.
-- Sistem durumu ayrıntıları yalnızca admin/moderatör panelinde (**Sistem Durumu** sekmesi) görünür.
-  İzleyiciler yalnızca **Aktif (yeşil)** / **Pasif (kırmızı)** düğmesini görür.
+- **Ana canlı ekran:** yayıncının paylaştığı oyun / maç / ekran görüntüsü (`🎮 Oyun / Maç / Ekran Paylaş` düğmesi, ses dahil tarayıcı izin verirse).
+- **Sol üst popup:** yayıncının yüzü (kamera). Popup'a **çift tıklayınca** yayıncı kamerası ana ekranı doldurur, tekrar çift tıklayınca eski düzene döner.
+- Ekran paylaşılmıyorsa yayıncı kamerası tüm ekranı kaplar. Yayın başlamadıysa herkes **📴 Yayın Kapalı** görür.
+- **Rumuz:** Kayıtta Ad Soyad (gizli) + Rumuz (herkese görünen) istenir. İzleyiciler birbirinin yalnızca rumuzunu görür; ad soyad ve e-posta sadece admin/moderatör panelinde görünür. Üstteki rumuz düğmesinden değiştirilebilir.
+- **Moderatör** kamera açmaz; canlı yayına sohbet mesajlarını yönetmek için katılır (mesaj silme, susturma, uzaklaştırma).
+- Sistem durumu ayrıntıları yalnızca admin/moderatör panelinde (**Sistem Durumu** sekmesi). İzleyiciler yalnızca **Aktif (yeşil)** / **Pasif (kırmızı)** düğmesini görür.
+- Aynı tarayıcıda iki hesap denerken tek oturum paylaşılır; farklı rolleri test etmek için gizli pencere veya başka tarayıcı kullan.
 
 ## 7. Notlar
 

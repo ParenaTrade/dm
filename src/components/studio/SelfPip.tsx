@@ -34,7 +34,7 @@ export function SelfPip({
   const showVideo = Boolean(stream && camOn && !mediaOff);
 
   return (
-    <div className="absolute left-3 top-3 z-10 h-28 w-28 overflow-hidden rounded-2xl border-2 border-gold/60 bg-black shadow-xl shadow-black/60 sm:h-36 sm:w-36">
+    <div className="absolute bottom-3 right-3 z-10 h-28 w-28 overflow-hidden rounded-2xl border-2 border-gold/60 bg-black shadow-xl shadow-black/60 sm:h-36 sm:w-36">
       <video
         ref={ref}
         autoPlay
