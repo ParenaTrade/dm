@@ -1124,14 +1124,14 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
               });
             }
             for (const g of participants.filter((p) => p.role === "guest" && p.status === "live")) {
-              if (g.userId === user.id) continue; // kendi görüntün zaten sağ altta (SelfPip)
+              const mine = g.userId === user.id; // konuk kendi profilini de listede görür
               tiles.push({
                 key: `g${g.userId}`,
                 role: "guest",
-                label: g.nickname,
-                stream: engine.remoteStreams[g.userId] ?? null,
-                showVideo: g.cameraOn,
-                mirror: false,
+                label: mine ? `${g.nickname} (sen)` : g.nickname,
+                stream: mine ? engine.localStream : (engine.remoteStreams[g.userId] ?? null),
+                showVideo: mine ? camOn && engine.mediaKind !== "off" : g.cameraOn,
+                mirror: mine,
                 fallback: avatar(g.nickname),
               });
             }
