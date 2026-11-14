@@ -11,6 +11,7 @@ export function StageVideo({
   showVideo = true,
   fallback,
   onDoubleClick,
+  onClick,
   className = "",
   children,
 }: {
@@ -21,6 +22,7 @@ export function StageVideo({
   showVideo?: boolean;
   fallback?: ReactNode;
   onDoubleClick?: () => void;
+  onClick?: () => void;
   className?: string;
   children?: ReactNode;
 }) {
@@ -46,7 +48,8 @@ export function StageVideo({
   return (
     <div
       onDoubleClick={onDoubleClick}
-      className={`relative overflow-hidden bg-black ${onDoubleClick ? "cursor-pointer" : ""} ${className}`}
+      onClick={onClick}
+      className={`relative overflow-hidden bg-black ${onDoubleClick || onClick ? "cursor-pointer" : ""} ${className}`}
     >
       <video
         ref={ref}
