@@ -137,6 +137,12 @@ const DDL = [
     url text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
   )`,
+  sql`CREATE TABLE IF NOT EXISTS site_images (
+    slot text PRIMARY KEY,
+    path text NOT NULL,
+    url text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
 ];
 
 let bootstrapPromise: Promise<void> | null = null;

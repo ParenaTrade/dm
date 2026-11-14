@@ -4,6 +4,7 @@ import { asc, desc } from "drizzle-orm";
 import { db } from "@/db";
 import { giveaways, moderators, scheduleItems, streams } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
+import { getSiteImages } from "@/lib/site-images";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,8 @@ function formatTime(date: Date | null) {
 
 export default async function HomePage() {
   await ensureSeed();
+  const imgs = await getSiteImages();
+  const img = (slot: string) => imgs[slot]?.url ?? null;
 
   const [streamRow] = await db.select().from(streams).orderBy(desc(streams.id)).limit(1);
   const schedule = await db.select().from(scheduleItems).orderBy(asc(scheduleItems.orderIndex));
@@ -59,7 +62,11 @@ export default async function HomePage() {
       <header className="sticky top-0 z-50 border-b border-white/10 bg-ink/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <Link href="/" className="flex items-center gap-3">
-            <Image src="/images/logo.png" alt="Berkbey" width={44} height={44} className="rounded-xl" />
+            {img("logo") ? (
+              <Image src={img("logo")!} alt="Berkbey" width={44} height={44} unoptimized className="h-11 w-11 rounded-xl object-cover" />
+            ) : (
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gold/15 text-xl">👑</span>
+            )}
             <div className="leading-none">
               <span className="font-display gold-text text-2xl">Berkbey</span>
               <p className="text-[10px] uppercase tracking-[0.3em] text-white/50">Oyun · Casino · Sohbet</p>
@@ -88,7 +95,7 @@ export default async function HomePage() {
       {/* HERO */}
       <section className="relative">
         <div className="absolute inset-0">
-          <Image src="/images/hero.jpg" alt="Berkbey stüdyo" fill priority className="object-cover object-center" />
+          {img("hero") && <Image src={img("hero")!} alt="Berkbey stüdyo" fill priority unoptimized className="object-cover object-center" />}
           <div className="absolute inset-0 bg-gradient-to-r from-ink via-ink/80 to-ink/30" />
           <div className="absolute inset-0 bg-gradient-to-t from-ink via-transparent to-ink/60" />
         </div>
@@ -130,7 +137,17 @@ export default async function HomePage() {
           </div>
 
           {/* LIVE CARD */}
-          <div className="glass neon-ring float-slow self-center rounded-3xl p-5">
+          <div className="glass neon-ring float-slow self-center overflow-hidden rounded-3xl">
+            {/* BANNER */}
+            <div className="relative aspect-video bg-gradient-to-br from-violet/40 via-ink2 to-neon/30">
+              {img("banner") ? (
+                <Image src={img("banner")!} alt="Berkbey canlı yayın" fill unoptimized className="object-cover" />
+              ) : (
+                <div className="flex h-full items-center justify-center font-display text-4xl gold-text">Berkbey</div>
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-ink/70 via-transparent to-transparent" />
+            </div>
+            <div className="p-5">
             <div className="flex items-center justify-between">
               <span className="rounded-full bg-red-600 px-3 py-1 text-[11px] font-bold tracking-wider">
                 {isLive ? "● CANLI" : "○ ÇEVRİMDIŞI"}
@@ -169,6 +186,7 @@ export default async function HomePage() {
             >
               Yayını izle / konuk ol →
             </Link>
+            </div>
           </div>
         </div>
       </section>
@@ -238,8 +256,8 @@ export default async function HomePage() {
       <section className="relative py-16">
         <div className="mx-auto max-w-7xl px-4 sm:px-6">
           <div className="grid gap-8 lg:grid-cols-2 lg:items-center">
-            <div className="relative aspect-[4/3] overflow-hidden rounded-3xl border border-white/10">
-              <Image src="/images/studio.jpg" alt="Stüdyo" fill className="object-cover" />
+            <div className="relative aspect-[4/3] overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-violet/30 to-ink2">
+              {img("studio") && <Image src={img("studio")!} alt="Stüdyo" fill unoptimized className="object-cover" />}
               <div className="absolute inset-0 bg-gradient-to-t from-ink/90 to-transparent" />
               <div className="absolute bottom-5 left-5 right-5">
                 <p className="font-display text-2xl text-gold">Yayıncı + Konuk Stüdyosu</p>
@@ -322,8 +340,8 @@ export default async function HomePage() {
               ))}
             </div>
           </div>
-          <div className="relative overflow-hidden rounded-3xl border border-white/10">
-            <Image src="/images/casino.jpg" alt="Canlı casino" fill className="object-cover" />
+          <div className="relative min-h-[260px] overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-violet/30 to-ink2">
+            {img("casino") && <Image src={img("casino")!} alt="Canlı casino" fill unoptimized className="object-cover" />}
             <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/40 to-transparent" />
             <div className="absolute bottom-6 left-6 right-6">
               <p className="font-display text-3xl gold-text">Canlı Casino Keyfi</p>
@@ -335,8 +353,8 @@ export default async function HomePage() {
 
       {/* AİLE */}
       <section className="mx-auto max-w-7xl px-4 pb-20 sm:px-6">
-        <div className="relative overflow-hidden rounded-3xl border border-white/10">
-          <Image src="/images/community.jpg" alt="Berkbey ailesi" fill className="object-cover" />
+        <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-violet/30 to-ink2">
+          {img("community") && <Image src={img("community")!} alt="Berkbey ailesi" fill unoptimized className="object-cover" />}
           <div className="absolute inset-0 bg-ink/70" />
           <div className="relative px-6 py-14 text-center">
             <h2 className="font-display text-5xl gold-text">Takip Et, Ailemize Katıl!</h2>

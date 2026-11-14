@@ -221,3 +221,11 @@ create table if not exists public.sponsors (
   url text not null,
   created_at timestamptz not null default now()
 );
+
+-- Ana sayfa görselleri (Storage "images" kovası dosya kayıtları)
+create table if not exists public.site_images (
+  slot text primary key,
+  path text not null,
+  url text not null,
+  updated_at timestamptz not null default now()
+);

@@ -38,7 +38,7 @@ Vercel → Project → **Settings → Environment Variables** (Production + Prev
 SUPABASE_DB_URL=postgresql://postgres.<ref>:<ŞİFRE>@aws-0-<bölge>.pooler.supabase.com:6543/postgres
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
-SUPABASE_SERVICE_ROLE_KEY=<service role>   # opsiyonel
+SUPABASE_SERVICE_ROLE_KEY=<service role>   # ana sayfa görsel yükleme için GEREKLİ (sunucuda kalır)
 ADMIN_EMAILS=berk@gmail.com,diger@gmail.com   # admin (yayıncı) e-posta adresleri
 ```
 
@@ -112,3 +112,10 @@ tıklayınca otomatik giriş yapılır. Onaylanmamış e-posta ile oturum açıl
   `turn:` kaydı ekle (kullanıcı adı/şifre env'den okunabilir).
 - Realtime broadcast kanalları public'tir (RLS ile satır erişimi ayrıdır). Üretimde
   anon anahtar kısıtlaması + Supabase "Private channels" özelliğini kullanmayı planla.
+
+## Ana sayfa görselleri (Storage)
+
+Admin paneli → **🖼 Görseller** sekmesinden logo, açılış arka planı, canlı yayın kartı banner'ı, stüdyo, oyun/masa ve aile görselleri
+**ekle / değiştir / sil** ile yönetilir. Dosyalar Supabase Storage `images` kovasındaki `site/` klasörüne yazılır
+(kova yoksa herkese açık olarak otomatik oluşturulur; farklı ad için `SUPABASE_IMAGES_BUCKET`).
+Gereken: Vercel'de `SUPABASE_SERVICE_ROLE_KEY`. Yükleme sınırı 4 MB (büyük fotoğraflar tarayıcıda otomatik küçültülür).

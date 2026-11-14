@@ -168,6 +168,14 @@ export const activityLog = pgTable("activity_log", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Ana sayfa görselleri: Supabase Storage (images kovası) dosyalarının slot kayıtları */
+export const siteImages = pgTable("site_images", {
+  slot: text("slot").primaryKey(),
+  path: text("path").notNull(),
+  url: text("url").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Sponsorlar / oyun siteleri: yalnızca yayıncı (admin) ekler, moderatör seçip yayına alır */
 export const sponsors = pgTable("sponsors", {
   id: serial("id").primaryKey(),

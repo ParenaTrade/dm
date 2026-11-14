@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { DeployStatus } from "@/components/DeployStatus";
+import { SiteImagesAdmin } from "@/components/SiteImagesAdmin";
 import { AuthForm } from "@/components/AuthForm";
 import { exchangeSession } from "@/lib/auth-client";
 import { ROLE_LABELS, roleBadgeClass, type AppUser, type ChatMessageInfo, type ModeratorInfo } from "@/lib/types";
@@ -20,7 +21,7 @@ type PanelUser = {
 
 type LogEntry = { id: number; actor: string; action: string; target: string; createdAt: string };
 
-type Tab = "mods" | "users" | "deleted" | "logs" | "system";
+type Tab = "mods" | "users" | "deleted" | "logs" | "system" | "images";
 
 export function PanelClient() {
   const [loading, setLoading] = useState(true);
@@ -176,6 +177,7 @@ export function PanelClient() {
             ["users", `👥 Kullanıcılar (${users.length})`],
             ["deleted", `🗑 Silinen Mesajlar (${deleted.length})`],
             ["logs", `📜 Olaylar (${logs.length})`],
+            ["images", "🖼 Görseller"],
             ["system", "🖥 Sistem Durumu"],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -293,6 +295,8 @@ export function PanelClient() {
             {deleted.length === 0 && <p className="text-sm text-white/50">Silinen mesaj yok. Sohbet tertemiz. ✨</p>}
           </div>
         )}
+
+        {tab === "images" && <SiteImagesAdmin />}
 
         {tab === "system" && <DeployStatus embedded />}
 
