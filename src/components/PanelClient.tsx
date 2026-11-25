@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { DeployStatus } from "@/components/DeployStatus";
 import { SiteImagesAdmin } from "@/components/SiteImagesAdmin";
+import { GamesAdmin, MatchesAdmin, PromosAdmin, ScheduleAdmin, SponsorsAdmin } from "@/components/admin/ContentAdmins";
+import { RevenueAdmin } from "@/components/admin/RevenueAdmin";
 import { AuthForm } from "@/components/AuthForm";
 import { exchangeSession } from "@/lib/auth-client";
 import { ROLE_LABELS, roleBadgeClass, type AppUser, type ChatMessageInfo, type ModeratorInfo } from "@/lib/types";
@@ -21,7 +23,7 @@ type PanelUser = {
 
 type LogEntry = { id: number; actor: string; action: string; target: string; createdAt: string };
 
-type Tab = "mods" | "users" | "deleted" | "logs" | "system" | "images";
+type Tab = "mods" | "users" | "deleted" | "logs" | "system" | "images" | "sponsors" | "promos" | "games" | "matches" | "schedule" | "revenue";
 
 export function PanelClient() {
   const [loading, setLoading] = useState(true);
@@ -178,6 +180,16 @@ export function PanelClient() {
             ["deleted", `🗑 Silinen Mesajlar (${deleted.length})`],
             ["logs", `📜 Olaylar (${logs.length})`],
             ["images", "🖼 Görseller"],
+            ...(isHost
+              ? ([
+                  ["sponsors", "🏷 Sponsorlar"],
+                  ["promos", "🎁 Promosyonlar"],
+                  ["games", "🎮 Oyunlar"],
+                  ["matches", "⚽ Maçlar"],
+                  ["schedule", "📅 Yayın Akışı"],
+                  ["revenue", "📈 Gelir"],
+                ] as [Tab, string][])
+              : []),
             ["system", "🖥 Sistem Durumu"],
           ] as [Tab, string][]
         ).map(([key, label]) => (
@@ -297,6 +309,12 @@ export function PanelClient() {
         )}
 
         {tab === "images" && <SiteImagesAdmin />}
+        {isHost && tab === "sponsors" && <SponsorsAdmin />}
+        {isHost && tab === "promos" && <PromosAdmin />}
+        {isHost && tab === "games" && <GamesAdmin />}
+        {isHost && tab === "matches" && <MatchesAdmin />}
+        {isHost && tab === "schedule" && <ScheduleAdmin />}
+        {isHost && tab === "revenue" && <RevenueAdmin />}
 
         {tab === "system" && <DeployStatus embedded />}
 

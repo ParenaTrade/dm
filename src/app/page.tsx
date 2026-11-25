@@ -5,6 +5,12 @@ import { db } from "@/db";
 import { giveaways, moderators, scheduleItems, streams } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
 import { getSiteImages } from "@/lib/site-images";
+import { listItems, listSponsors } from "@/lib/site-content";
+import { LiveStudio } from "@/components/studio/LiveStudio";
+import { Disclosure } from "@/components/site/Disclosure";
+import { PromoGrid, SponsorGrid } from "@/components/site/ContentCards";
+import { SiteFooter } from "@/components/site/SiteFooter";
+import { SiteHeader } from "@/components/site/SiteHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -39,11 +45,6 @@ const STUDIO_FEATURES = [
   },
 ];
 
-function formatTime(date: Date | null) {
-  if (!date) return "";
-  return new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "long" }).format(date);
-}
-
 export default async function HomePage() {
   await ensureSeed();
   const imgs = await getSiteImages();
@@ -53,140 +54,56 @@ export default async function HomePage() {
   const schedule = await db.select().from(scheduleItems).orderBy(asc(scheduleItems.orderIndex));
   const gifts = await db.select().from(giveaways).orderBy(asc(giveaways.id));
   const mods = await db.select().from(moderators).orderBy(asc(moderators.id));
+  const promos = (await listItems("promo")).slice(0, 3);
+  const sponsorList = await listSponsors();
 
   const isLive = streamRow?.status === "live";
 
   return (
     <div className="relative overflow-x-hidden">
-      {/* HEADER */}
-      <header className="sticky top-0 z-50 border-b border-white/10 bg-ink/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <Link href="/" className="flex items-center gap-3">
-            {img("logo") ? (
-              <Image src={img("logo")!} alt="Berkbey" width={44} height={44} unoptimized className="h-11 w-11 rounded-xl object-cover" />
-            ) : (
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gold/15 text-xl">👑</span>
-            )}
-            <div className="leading-none">
-              <span className="font-display gold-text text-2xl">Berkbey</span>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-white/50">Oyun · Casino · Sohbet</p>
-            </div>
-          </Link>
-
-          <nav className="hidden items-center gap-6 text-sm text-white/70 lg:flex">
-            <Link className="transition hover:text-gold" href="/">Ana Sayfa</Link>
-            <Link className="transition hover:text-gold" href="/izle">Canlı Yayın</Link>
-            <a className="transition hover:text-gold" href="#program">Program</a>
-            <a className="transition hover:text-gold" href="#cekilis">Çekilişler</a>
-            <Link className="transition hover:text-gold" href="/panel">Moderatör Paneli</Link>
-            <Link className="transition hover:text-gold" href="/durum">Sistem Durumu</Link>
-          </nav>
-
-          <Link
-            href="/izle"
-            className="btn-gold flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold"
-          >
-            <span className={isLive ? "live-dot inline-block h-2 w-2 rounded-full bg-red-600" : "inline-block h-2 w-2 rounded-full bg-red-900"} />
-            CANLI YAYIN
-          </Link>
-        </div>
-      </header>
+      <SiteHeader isLive={isLive} logoUrl={img("logo")} />
 
       {/* HERO */}
       <section className="relative">
         <div className="absolute inset-0">
           {img("hero") && <Image src={img("hero")!} alt="Berkbey stüdyo" fill priority unoptimized className="object-cover object-center" />}
-          <div className="absolute inset-0 bg-gradient-to-r from-ink via-ink/80 to-ink/30" />
+          <div className="absolute inset-0 bg-gradient-to-r from-ink via-ink/80 to-ink/40" />
           <div className="absolute inset-0 bg-gradient-to-t from-ink via-transparent to-ink/60" />
         </div>
 
-        <div className="relative mx-auto grid max-w-7xl gap-10 px-4 py-20 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:py-28">
-          <div>
-            <div className="mb-6 inline-flex items-center gap-3 rounded-full border border-gold/40 bg-gold/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-gold">
-              <span className={isLive ? "live-dot h-2.5 w-2.5 rounded-full bg-red-500" : "h-2.5 w-2.5 rounded-full bg-white/40"} />
-              {isLive ? "Şimdi yayında" : "Yayın dışı — bir sonraki seansı bekle"}
-            </div>
-
-            <h1 className="font-display text-6xl leading-[0.9] sm:text-7xl lg:text-8xl">
-              <span className="gold-text drop-shadow-[0_6px_30px_rgba(245,197,66,0.35)]">Berkbey</span>
-            </h1>
-            <p className="mt-3 font-display text-3xl text-white/90 sm:text-4xl">
-              Birlikte Daha Eğlenceli...
-            </p>
-            <p className="mt-4 max-w-xl text-lg text-white/65">
-              Canlı yayın stüdyosu, konuk programları, moderatörlü sohbet, çekilişler ve turnuvalar.
-              Tek bir yerde: <span className="text-gold">Oyun · Casino · Sohbet</span>
-            </p>
-
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link href="/izle" className="btn-gold rounded-full px-7 py-3.5 text-base font-bold">
-                ▶ Stüdyoya Gir
-              </Link>
-              <a href="#program" className="btn-ghost rounded-full px-7 py-3.5 text-base font-semibold text-white/85">
-                Yayın Programı
-              </a>
-            </div>
-
-            <div className="mt-10 flex flex-wrap items-center gap-4 text-white/60">
-              {["YouTube", "Twitch", "Kick", "Instagram", "TikTok", "Discord"].map((s) => (
-                <span key={s} className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium">
-                  {s}
-                </span>
-              ))}
-            </div>
+        <div className="relative mx-auto max-w-7xl px-4 pb-6 pt-14 sm:px-6 lg:pt-20">
+          <div className="mb-6 inline-flex items-center gap-3 rounded-full border border-gold/40 bg-gold/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-gold">
+            <span className={isLive ? "live-dot h-2.5 w-2.5 rounded-full bg-red-500" : "h-2.5 w-2.5 rounded-full bg-white/40"} />
+            {isLive ? "Şimdi yayında" : "Yayın dışı — bir sonraki seansı bekle"}
           </div>
 
-          {/* LIVE CARD */}
-          <div className="glass neon-ring float-slow self-center overflow-hidden rounded-3xl">
-            {/* BANNER */}
-            <div className="relative aspect-video bg-gradient-to-br from-violet/40 via-ink2 to-neon/30">
-              {img("banner") ? (
-                <Image src={img("banner")!} alt="Berkbey canlı yayın" fill unoptimized className="object-cover" />
-              ) : (
-                <div className="flex h-full items-center justify-center font-display text-4xl gold-text">Berkbey</div>
-              )}
-              <div className="absolute inset-0 bg-gradient-to-t from-ink/70 via-transparent to-transparent" />
-            </div>
-            <div className="p-5">
-            <div className="flex items-center justify-between">
-              <span className="rounded-full bg-red-600 px-3 py-1 text-[11px] font-bold tracking-wider">
-                {isLive ? "● CANLI" : "○ ÇEVRİMDIŞI"}
-              </span>
-              <span className="text-xs text-white/50">{streamRow?.category ?? "Sohbet"}</span>
-            </div>
-            <h2 className="mt-4 text-2xl font-bold leading-snug">
-              {streamRow?.title ?? "Berkbey ile Canlı Sohbet"}
-            </h2>
-            <p className="mt-2 text-sm text-white/60">{streamRow?.description}</p>
+          <h1 className="font-display text-6xl leading-[0.9] sm:text-7xl lg:text-8xl">
+            <span className="gold-text drop-shadow-[0_6px_30px_rgba(245,197,66,0.35)]">Berkbey</span>
+          </h1>
+          <p className="mt-3 font-display text-3xl text-white/90 sm:text-4xl">Birlikte Daha Eğlenceli...</p>
+          <p className="mt-4 max-w-2xl text-lg text-white/65">
+            Canlı oyun ve maç yayınları, moderatörlü sohbet, çekilişler ve sponsor fırsatları.
+            Tek bir yerde: <span className="text-gold">Oyun · Casino · Sohbet</span>
+          </p>
 
-            <div className="mt-5 grid grid-cols-3 gap-3 text-center">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <p className="font-display text-2xl text-gold">{mods.length}</p>
-                <p className="text-[11px] uppercase tracking-wider text-white/50">Moderatör</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <p className="font-display text-2xl text-gold">{streamRow?.guestLimit ?? 3}</p>
-                <p className="text-[11px] uppercase tracking-wider text-white/50">Konuk Koltuğu</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <p className="font-display text-2xl text-gold">{schedule.length}</p>
-                <p className="text-[11px] uppercase tracking-wider text-white/50">Haftalık Seans</p>
-              </div>
-            </div>
-
-            <p className="mt-5 text-xs text-white/40">
-              {isLive && streamRow?.startedAt
-                ? `Yayın ${formatTime(streamRow.startedAt)} itibarıyla sürüyor`
-                : "E-posta ile kayıt ol, stüdyodan takip et"}
-            </p>
-
-            <Link
-              href="/izle"
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 py-3 text-sm font-semibold transition hover:bg-white/20"
-            >
-              Yayını izle / konuk ol →
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            <a href="#canli" className="btn-gold rounded-full px-7 py-3.5 text-base font-bold">
+              ▶ Canlı Yayına Katıl
+            </a>
+            <Link href="/promosyonlar" className="btn-ghost rounded-full px-7 py-3.5 text-base font-semibold text-white/85">
+              🎁 Promosyonlar
             </Link>
-            </div>
+            <a href="#program" className="btn-ghost rounded-full px-7 py-3.5 text-base font-semibold text-white/85">
+              Yayın Programı
+            </a>
+          </div>
+        </div>
+
+        {/* CANLI EKRAN + SOHBET (stüdyo ekranının aynısı) */}
+        <div id="canli" className="relative mx-auto max-w-7xl scroll-mt-24 px-4 pb-14 pt-6 sm:px-6">
+          <LiveStudio mode="viewer" embedded posterUrl={img("banner")} />
+          <div className="mt-3">
+            <Disclosure compact />
           </div>
         </div>
       </section>
@@ -212,8 +129,8 @@ export default async function HomePage() {
             <Link href="/izle" className="btn-gold rounded-full px-5 py-2 text-xs font-bold">
               Yayına Katıl
             </Link>
-            <Link href="/panel" className="btn-ghost rounded-full px-5 py-2 text-xs font-semibold text-white/80">
-              Moderatör Paneli
+            <Link href="/promosyonlar" className="btn-ghost rounded-full px-5 py-2 text-xs font-semibold text-white/80">
+              Promosyonlar
             </Link>
           </div>
         </div>
@@ -234,6 +151,32 @@ export default async function HomePage() {
           ))}
         </div>
       </div>
+
+      {/* SPONSOR FIRSATLARI */}
+      {(promos.length > 0 || sponsorList.length > 0) && (
+        <section className="mx-auto max-w-7xl px-4 pt-16 sm:px-6">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="font-display text-4xl">Sponsor Fırsatları</h2>
+              <p className="mt-2 text-white/60">Bonus, freespin ve kayıp bonusu kampanyaları. Şartlar kartlarda yazılıdır.</p>
+            </div>
+            <Link href="/promosyonlar" className="btn-ghost rounded-full px-5 py-2.5 text-sm font-semibold">
+              Tüm promosyonlar →
+            </Link>
+          </div>
+          {promos.length > 0 && (
+            <div className="mt-8">
+              <PromoGrid items={promos} />
+            </div>
+          )}
+          {sponsorList.length > 0 && (
+            <div className="mt-10">
+              <p className="mb-3 text-xs font-bold uppercase tracking-[0.25em] text-white/40">İş ortaklarımız</p>
+              <SponsorGrid items={sponsorList.slice(0, 6)} />
+            </div>
+          )}
+        </section>
+      )}
 
       {/* FEATURES */}
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
@@ -366,8 +309,8 @@ export default async function HomePage() {
               <Link href="/izle" className="btn-gold rounded-full px-7 py-3 font-bold">
                 Canlı Yayına Katıl
               </Link>
-              <Link href="/panel" className="btn-ghost rounded-full px-7 py-3 font-semibold text-white/85">
-                Moderatör Paneli
+              <Link href="/promosyonlar" className="btn-ghost rounded-full px-7 py-3 font-semibold text-white/85">
+                Promosyonlar
               </Link>
             </div>
             <div className="mt-8 flex flex-wrap justify-center gap-2">
@@ -381,44 +324,7 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* FOOTER */}
-      <footer className="border-t border-white/10 bg-ink2/70">
-        <div className="mx-auto grid max-w-7xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-4">
-          <div>
-            <p className="font-display gold-text text-3xl">Berkbey</p>
-            <p className="mt-2 text-sm text-white/50">
-              Oyun · Casino · Sohbet. Berkbey ile her yayın daha özel.
-            </p>
-          </div>
-          <div>
-            <p className="mb-3 text-sm font-bold uppercase tracking-wider text-gold">Platform</p>
-            <ul className="space-y-2 text-sm text-white/60">
-              <li><Link href="/canli" className="hover:text-gold">Canlı Yayın Stüdyosu</Link></li>
-              <li><Link href="/panel" className="hover:text-gold">Moderatör Paneli</Link></li>
-              <li><Link href="/durum" className="hover:text-gold">Sistem &amp; Deployment Durumu</Link></li>
-              <li><a href="#program" className="hover:text-gold">Yayın Programı</a></li>
-              <li><a href="#cekilis" className="hover:text-gold">Çekilişler</a></li>
-            </ul>
-          </div>
-          <div>
-            <p className="mb-3 text-sm font-bold uppercase tracking-wider text-gold">Sosyal</p>
-            <ul className="space-y-2 text-sm text-white/60">
-              {["YouTube", "Twitch", "Kick", "Instagram", "TikTok", "Discord"].map((s) => (
-                <li key={s} className="hover:text-gold">{s}</li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <p className="mb-3 text-sm font-bold uppercase tracking-wider text-gold">Bilgi</p>
-            <p className="text-sm text-white/50">
-              Yayın altyapısı tarayıcılar arası WebRTC ile çalışır. Giriş e-posta ve şifre ile yapılır, e-posta onayı gerekir.
-            </p>
-          </div>
-        </div>
-        <div className="border-t border-white/10 py-5 text-center text-xs text-white/40">
-          © {new Date().getFullYear()} Berkbey — Tüm hakları saklıdır.
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

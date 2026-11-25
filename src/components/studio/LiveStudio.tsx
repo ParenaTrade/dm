@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SponsorAdStrip } from "@/components/SponsorAdStrip";
 import { ChatPanel } from "./ChatPanel";
 import { StageVideo } from "./StageVideo";
 import { AudioSink } from "./AudioSink";
@@ -35,7 +36,16 @@ export type StudioMode = "studio" | "moderator" | "viewer";
 
 const homeFor = (role: string) => (role === "host" ? "/canli" : role === "moderator" ? "/panel/yayin" : "/izle");
 
-export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
+export function LiveStudio({
+  mode = "studio",
+  embedded = false,
+  posterUrl = null,
+}: {
+  mode?: StudioMode;
+  /** Ana sayfaya gömülü kompakt görünüm: yalnız canlı ekran + sohbet */
+  embedded?: boolean;
+  posterUrl?: string | null;
+}) {
   const router = useRouter();
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
@@ -51,7 +61,6 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
   const [me, setMe] = useState<ParticipantInfo | null>(null);
   const [messages, setMessages] = useState<ChatMessageInfo[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [guestCamOff, setGuestCamOff] = useState(false);
   const [guestDialog, setGuestDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [micOn, setMicOn] = useState(false);
@@ -83,8 +92,8 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
   const expectedRole = mode === "studio" ? "host" : mode === "moderator" ? "moderator" : "viewer";
   const wrongPlace = Boolean(user) && user!.role !== expectedRole;
   useEffect(() => {
-    if (user && wrongPlace) router.replace(homeFor(user.role));
-  }, [user, wrongPlace, router]);
+    if (user && wrongPlace && !embedded) router.replace(homeFor(user.role));
+  }, [user, wrongPlace, router, embedded]);
 
   const realtimeLive = rtStatus === "live";
 
@@ -383,11 +392,10 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
   const startBroadcast = async () => {
     const res = await streamAction({ action: "start" });
     if (!res.ok) setNotice(res.error ?? "Yayın başlatılamadı");
-    const mediaOk = await engine.setMedia("camera");
-    setCamOn(mediaOk);
-    setMicOn(mediaOk);
+    setCamOn(false);
+    setMicOn(false);
     channelRef.current?.send({ type: "stage", text: "🔴 Yayın başladı! Berkbey sahnede." });
-    setNotice("Yayın başladı! 🎬");
+    setNotice("Yayın başladı! Kamera ve mikrofon kapalı, hazır olunca düğmelerden aç. 🎬");
   };
 
   const stopBroadcast = async () => {
@@ -665,46 +673,18 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
      Sahneye alınan konuk kamerasını açar (yüzünü göstermek istemiyorsa kapalı kalır).
      Yenilemeden sonra yayıncı kamerası kendiliğinden geri gelir. */
   const streamLive = stream?.status === "live";
-  const resumedRef = useRef(false);
+  // Kamera ve mikrofon VARSAYILAN KAPALI: kimse için (yayıncı, moderatör, konuk, üye) otomatik açılmaz.
+  // Cihazlar yalnızca kullanıcı ilgili düğmeye basınca açılır. Yayından/sahneden çıkılınca tamamen kapatılır.
   useEffect(() => {
     if (!user) return;
-    if (isHost) {
-      if (!streamLive) {
-        resumedRef.current = false;
-        return;
-      }
-      if (resumedRef.current || engine.mediaKind !== "off") return;
-      resumedRef.current = true;
-      void engine.setMedia("camera").then((ok) => {
-        setCamOn(ok);
-        setMicOn(ok);
-      });
-      return;
-    }
-    const wantsMedia = (isMod && streamLive) || onStageGuest;
-    if (wantsMedia) {
-      if (autoMediaRef.current) return;
-      autoMediaRef.current = true;
-      const videoOff = !isMod && guestCamOff;
-      void engine.setMedia("camera", { muted: isMod, videoOff }).then((ok) => {
-        if (!ok) {
-          // Medya açılamadı: düğmeler "kapalı" göstersin, kullanıcı tıklayınca tekrar denesin.
-          autoMediaRef.current = false;
-          setCamOn(false);
-          setMicOn(false);
-          return;
-        }
-        setCamOn(!videoOff);
-        setMicOn(!isMod);
-      });
-    } else if (autoMediaRef.current) {
-      autoMediaRef.current = false;
+    const mayHaveMedia = ((isHost || isMod) && streamLive) || onStageGuest;
+    if (!mayHaveMedia && engine.mediaKind !== "off") {
       void engine.setMedia("off");
       setCamOn(false);
       setMicOn(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, isHost, isMod, streamLive, onStageGuest, guestCamOff]);
+  }, [user?.id, isHost, isMod, streamLive, onStageGuest, engine.mediaKind]);
 
   /** Ekran düzeni: yayıncı/moderatör popup'a çift tıklayınca herkes için değişir (Realtime). */
   const setFocus = async (focus: "screen" | "mod" | "host") => {
@@ -722,46 +702,44 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
     setNotice("Rumuzun güncellendi.");
   };
 
-  /** Medya kapalıyken (izin reddi / cihaz meşgul / ilk açılış) düğmeye basınca yeniden başlatır. */
-  const startOwnMedia = async () => {
-    const videoOff = !isHost && !isMod && guestCamOff;
-    const ok = await engine.setMedia("camera", { videoOff });
-    setMicOn(ok);
-    setCamOn(ok && !videoOff);
+  /** Kamera/mikrofon düğmeleri: yalnızca istenen cihaz açılır, kapatılınca cihaz tamamen bırakılır. */
+  const startOwnMedia = async (want: { cam?: boolean; mic?: boolean }) => {
+    const cam = want.cam ?? camOn;
+    const mic = want.mic ?? micOn;
+    const ok = await engine.setMedia("camera", { videoOff: !cam, audioOff: !mic });
+    if (!ok) {
+      setCamOn(false);
+      setMicOn(false);
+      return;
+    }
+    setCamOn(cam);
+    setMicOn(mic);
   };
 
-  const toggleMic = () => {
-    if (engine.mediaKind === "off") {
-      void startOwnMedia();
-      return;
-    }
-    if (!engine.localStream?.getAudioTracks().length) {
-      setNotice("Mikrofon bulunamadı. Cihazını/izinleri kontrol et.");
-      return;
-    }
-    engine.toggleAudio();
-    setMicOn((v) => !v);
-  };
-
-  const toggleCam = () => {
-    if (engine.mediaKind === "off") {
-      void startOwnMedia();
-      return;
-    }
-    if (!engine.localStream?.getVideoTracks().length) {
-      setNotice("Kamera bulunamadı veya başka uygulama kullanıyor. Kapatıp 'Kamerayı aç'a tekrar bas.");
-      void startOwnMedia();
-      return;
-    }
-    engine.toggleVideo();
-    setCamOn((c) => !c);
-  };
+  const toggleMic = () => void startOwnMedia({ mic: !micOn });
+  const toggleCam = () => void startOwnMedia({ cam: !camOn });
 
   /* ---------------- views ---------------- */
+  if (authLoading && embedded) {
+    return <div className="glass animate-pulse rounded-3xl px-6 py-16 text-center text-white/70">Canlı yayın hazırlanıyor...</div>;
+  }
+
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="glass animate-pulse rounded-3xl px-10 py-8 text-lg">Stüdyo hazırlanıyor...</div>
+      </div>
+    );
+  }
+
+  if (user && wrongPlace && embedded) {
+    return (
+      <div className="glass neon-ring rounded-3xl p-8 text-center">
+        <p className="font-display gold-text text-3xl">{isHost ? "Yayıncı Stüdyosu" : "Moderatör Paneli"}</p>
+        <p className="mt-2 text-sm text-white/60">Yayın yönetimi için kendi alanına geç.</p>
+        <Link href={homeFor(user.role)} className="btn-gold mt-5 inline-block rounded-full px-6 py-2.5 text-sm font-bold">
+          {isHost ? "▶ Stüdyoya Git" : "🎥 Canlı Yayın Kontrolü"}
+        </Link>
       </div>
     );
   }
@@ -785,6 +763,37 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
             Kendi alanıma git
           </Link>
         </div>
+      </div>
+    );
+  }
+
+  if (!user && embedded) {
+    const live = stream?.status === "live";
+    return (
+      <div className="glass neon-ring overflow-hidden rounded-3xl">
+        <div className="relative aspect-video bg-gradient-to-br from-violet/40 via-ink2 to-neon/30">
+          {posterUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={posterUrl} alt="Berkbey canlı yayın" className="absolute inset-0 h-full w-full object-cover" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/50 to-ink/20" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center">
+            <span className="flex items-center gap-2 rounded-full bg-red-600 px-3 py-1 text-[11px] font-bold tracking-wider">
+              <span className={live ? "live-dot h-2 w-2 rounded-full bg-white" : "h-2 w-2 rounded-full bg-white/50"} />
+              {live ? "CANLI YAYIN" : "ÇEVRİMDIŞI"}
+            </span>
+            <p className="font-display gold-text text-3xl sm:text-5xl">{stream?.title ?? "Berkbey Canlı Yayın"}</p>
+            <button onClick={() => setRoomOpen((v) => !v)} className="btn-gold rounded-full px-7 py-3 text-sm font-bold">
+              {roomOpen ? "Kapat" : "▶ Giriş yap, yayını izle ve sohbete katıl"}
+            </button>
+          </div>
+        </div>
+        {roomOpen && (
+          <div className="mx-auto max-w-md p-5">
+            {authError && <p className="mb-3 text-sm text-red-300">{authError}</p>}
+            <AuthForm onDone={(u) => setUser(u)} />
+          </div>
+        )}
       </div>
     );
   }
@@ -840,10 +849,34 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
   const canPublish = isHost || isMod || onStageGuest;
 
   return (
-    <div className="mx-auto grid max-w-[1560px] gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_390px] lg:p-5">
+    <div
+      className={
+        embedded
+          ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]"
+          : "mx-auto grid max-w-[1560px] gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_390px] lg:p-5"
+      }
+    >
       {/* LEFT */}
       <div className="min-w-0 space-y-4">
         {/* TOP BAR */}
+        {embedded ? (
+          <div className="glass-dark flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-2.5 text-xs">
+            <p className="min-w-0 truncate text-sm font-semibold">{stream?.title ?? "Berkbey Canlı Yayın"}</p>
+            <div className="flex items-center gap-2">
+              <span
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1 font-bold ${
+                  stream?.status === "live" ? "bg-red-600 text-white" : "bg-white/10 text-white/60"
+                }`}
+              >
+                <span className={stream?.status === "live" ? "live-dot h-2 w-2 rounded-full bg-white" : "h-2 w-2 rounded-full bg-white/40"} />
+                {stream?.status === "live" ? "CANLI" : "YAYIN DIŞI"}
+              </span>
+              <span className="rounded-full bg-white/10 px-3 py-1">👁 {liveCount}</span>
+              <span className="hidden rounded-full bg-white/10 px-3 py-1 sm:inline">{user.nickname}</span>
+              <Link href="/izle" className="btn-ghost rounded-full px-3 py-1">Tam ekran stüdyo</Link>
+            </div>
+          </div>
+        ) : (
         <div className="glass-dark flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 text-sm">
@@ -906,6 +939,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
             </button>
           </div>
         </div>
+        )}
 
         {engine.error && (
           <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">{engine.error}</p>
@@ -1157,6 +1191,9 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
                     {main?.label}
                   </span>
                 </StageVideo>
+
+                {/* Sponsor reklamı: canlı yayında marka logosu + bonus/freespin; tam ekranda da görünür */}
+                {stream?.status === "live" && <SponsorAdStrip category={stream?.category} />}
 
                 {/* Tam ekran: sağ alt köşe */}
                 <button
@@ -1566,15 +1603,9 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
               <p className="mt-2 text-sm text-white/60">
                 Rumuzunla ({user.nickname}) konuk isteği gönderirsin. Onaylanınca sahneye alınırsın.
               </p>
-              <label className="mt-4 flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={guestCamOff}
-                  onChange={(e) => setGuestCamOff(e.target.checked)}
-                  className="h-4 w-4 accent-amber-400"
-                />
-                Yüzümü göstermek istemiyorum (kameram kapalı katıl)
-              </label>
+              <p className="mt-3 text-xs text-white/45">
+                Sahneye alınınca kameran ve mikrofonun kapalı başlar; hazır olunca kendin açarsın.
+              </p>
               <div className="mt-5 flex gap-2">
                 <button onClick={() => void requestGuest()} className="btn-gold flex-1 rounded-xl py-3 font-bold">
                   İstek Gönder
@@ -1589,7 +1620,7 @@ export function LiveStudio({ mode = "studio" }: { mode?: StudioMode }) {
       </div>
 
       {/* RIGHT: CHAT */}
-      <div className="h-[70vh] min-h-[420px] lg:h-[calc(100vh-2.5rem)]">
+      <div className={embedded ? "h-[480px] lg:h-auto lg:min-h-[520px]" : "h-[70vh] min-h-[420px] lg:h-[calc(100vh-2.5rem)]"}>
         <ChatPanel
           messages={messages}
           locked={Boolean(stream?.chatLocked)}

@@ -819,9 +819,14 @@ export function useLiveEngine(params: {
    * konukta ne kamera ne mikrofon düğmesi çalışıyordu).
    */
   const setMedia = useCallback(
-    async (kind: "off" | "camera", opts?: { muted?: boolean; videoOff?: boolean }): Promise<boolean> => {
+    async (
+      kind: "off" | "camera",
+      opts?: { muted?: boolean; videoOff?: boolean; audioOff?: boolean },
+    ): Promise<boolean> => {
       setError(null);
       try {
+        // Kamera da mikrofon da istenmiyorsa hiçbir cihaz açılmaz (varsayılan: ikisi de kapalı)
+        if (kind === "camera" && opts?.videoOff && opts?.audioOff) kind = "off";
         if (kind === "off") {
           micCleanup.current?.();
           micCleanup.current = null;
@@ -840,21 +845,25 @@ export function useLiveEngine(params: {
           facingMode: "user",
         };
         const gum = (c: MediaStreamConstraints) => navigator.mediaDevices.getUserMedia(c);
+        // videoOff / audioOff: o cihaz hiç açılmaz (tarayıcıda kamera/mikrofon göstergesi yanmaz)
+        const vC: MediaTrackConstraints | false = opts?.videoOff ? false : videoC;
+        const aC: MediaTrackConstraints | false = opts?.audioOff ? false : MIC_CONSTRAINTS;
         let raw: MediaStream;
         let warn: string | null = null;
         try {
-          raw = await gum({ video: videoC, audio: MIC_CONSTRAINTS });
+          raw = await gum({ video: vC, audio: aC });
         } catch (err) {
           const name = err instanceof Error ? err.name : "";
           if (name === "NotAllowedError" || name === "SecurityError") throw err;
           try {
-            raw = await gum({ video: videoC, audio: true }); // kısıt reddedildiyse sade ayarla dene
-          } catch {
+            raw = await gum({ video: vC, audio: aC ? true : false }); // kısıt reddedildiyse sade ayarla dene
+          } catch (err2) {
+            if (!(vC && aC)) throw err2;
             try {
-              raw = await gum({ audio: MIC_CONSTRAINTS }); // kamera yok/meşgul: yalnız mikrofon
+              raw = await gum({ audio: aC }); // kamera yok/meşgul: yalnız mikrofon
               warn = "Kamera açılamadı (başka uygulama kullanıyor olabilir). Yalnız mikrofonla devam ediliyor.";
             } catch {
-              raw = await gum({ video: videoC }); // mikrofon yok: yalnız kamera
+              raw = await gum({ video: vC }); // mikrofon yok: yalnız kamera
               warn = "Mikrofon bulunamadı. Yalnız kamera ile devam ediliyor.";
             }
           }
@@ -864,7 +873,6 @@ export function useLiveEngine(params: {
         const cleaned = await cleanMicStream(raw);
         const stream = cleaned.stream;
         if (opts?.muted) stream.getAudioTracks().forEach((t) => (t.enabled = false));
-        if (opts?.videoOff) stream.getVideoTracks().forEach((t) => (t.enabled = false));
 
         micCleanup.current?.();
         localStreamRef.current?.getTracks().forEach((track) => track.stop());

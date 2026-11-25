@@ -139,3 +139,11 @@ TURN_KEY_API_TOKEN=<anahtarın API token'ı>
 
 Alternatif (başka sağlayıcı, sabit şifreli): `NEXT_PUBLIC_TURN_URLS`, `NEXT_PUBLIC_TURN_USERNAME`,
 `NEXT_PUBLIC_TURN_CREDENTIAL` değişkenleri de desteklenir.
+
+## Sponsor / affiliate gelir sistemi
+
+- **Admin paneli (`/panel`, yalnız admin):** Sponsorlar, Promosyonlar, Oyunlar, Maçlar, Yayın Akışı sekmelerinden ekle / düzenle / sil. Logo ve görseller `images` kovasına yüklenir.
+- **Ziyaretçi menüsü:** `/sponsorlar`, `/promosyonlar`, `/oyunlar`, `/maclar`. Yayında dönen reklam şeridi, yayın kategorisine (Oyun / Maç / Sohbet) göre promosyon seçer.
+- **Tıklama izleme:** Tüm sponsor bağlantıları `/go/...` üzerinden geçer; her tıklamaya `click_id` verilir ve affiliate adresine eklenir (`{click_id}` yer tutucusu veya sponsorda tanımlı parametre adı).
+- **Komisyon:** Affiliate ağının postback adresine `…/api/postback?secret=GIZLI&click_id={click_id}&event=ftd&amount={amount}&commission={commission}` gir. Vercel'de `AFFILIATE_POSTBACK_SECRET` tanımlı olmalı. Sonuçlar panelde **Gelir** sekmesinde.
+- Görsel/logo yüklemek için `SUPABASE_SERVICE_ROLE_KEY` gerekir (yoksa görsel adresi yapıştırılabilir).

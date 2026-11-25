@@ -1,5 +1,6 @@
 import {
   boolean,
+  doublePrecision,
   index,
   integer,
   pgTable,
@@ -180,6 +181,60 @@ export const siteImages = pgTable("site_images", {
 export const sponsors = pgTable("sponsors", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  /** Affiliate (iş ortaklığı) adresi. {click_id} yer tutucusu varsa tıklama kodu oraya yazılır. */
   url: text("url").notNull(),
+  logoUrl: text("logo_url").notNull().default(""),
+  description: text("description").notNull().default(""),
+  /** Affiliate ağına tıklama kodunu iletecek parametre adı (ör. subid, sub1, clickid) */
+  clickParam: text("click_param").notNull().default("subid"),
+  active: boolean("active").notNull().default(true),
+  orderIndex: integer("order_index").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Menü içerikleri: promo (bonus/freespin/kayıp bonusu), game (oyun), match (maç) */
+export const siteItems = pgTable("site_items", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  subtitle: text("subtitle").notNull().default(""),
+  body: text("body").notNull().default(""),
+  imageUrl: text("image_url").notNull().default(""),
+  /** Boşsa bağlı sponsorun affiliate adresi kullanılır */
+  linkUrl: text("link_url").notNull().default(""),
+  sponsorId: integer("sponsor_id"),
+  badge: text("badge").notNull().default(""),
+  terms: text("terms").notNull().default(""),
+  /** Yayında hangi akışta gösterilsin: all | oyun | mac | sohbet */
+  placement: text("placement").notNull().default("all"),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  active: boolean("active").notNull().default(true),
+  orderIndex: integer("order_index").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Affiliate tıklamaları (komisyon eşleştirmesi için click_id) */
+export const affiliateClicks = pgTable(
+  "affiliate_clicks",
+  {
+    id: serial("id").primaryKey(),
+    clickId: text("click_id").notNull(),
+    sponsorId: integer("sponsor_id"),
+    itemId: integer("item_id"),
+    placement: text("placement").notNull().default(""),
+    userId: integer("user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("affiliate_clicks_click_idx").on(table.clickId)],
+);
+
+/** Affiliate ağından gelen postback: kayıt, ilk yatırım, yatırım, komisyon */
+export const affiliateConversions = pgTable("affiliate_conversions", {
+  id: serial("id").primaryKey(),
+  clickId: text("click_id").notNull(),
+  sponsorId: integer("sponsor_id"),
+  event: text("event").notNull().default("signup"),
+  amount: doublePrecision("amount").notNull().default(0),
+  commission: doublePrecision("commission").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

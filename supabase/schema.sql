@@ -229,3 +229,52 @@ create table if not exists public.site_images (
   url text not null,
   updated_at timestamptz not null default now()
 );
+
+-- Sponsor / affiliate genişletmesi, menü içerikleri ve tıklama-komisyon takibi
+alter table public.sponsors add column if not exists logo_url text not null default '';
+alter table public.sponsors add column if not exists description text not null default '';
+alter table public.sponsors add column if not exists click_param text not null default 'subid';
+alter table public.sponsors add column if not exists active boolean not null default true;
+alter table public.sponsors add column if not exists order_index integer not null default 0;
+
+create table if not exists public.site_items (
+  id serial primary key,
+  kind text not null,
+  title text not null,
+  subtitle text not null default '',
+  body text not null default '',
+  image_url text not null default '',
+  link_url text not null default '',
+  sponsor_id integer,
+  badge text not null default '',
+  terms text not null default '',
+  placement text not null default 'all',
+  starts_at timestamptz,
+  active boolean not null default true,
+  order_index integer not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists site_items_kind_idx on public.site_items (kind, active, order_index);
+
+create table if not exists public.affiliate_clicks (
+  id serial primary key,
+  click_id text not null,
+  sponsor_id integer,
+  item_id integer,
+  placement text not null default '',
+  user_id integer,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists affiliate_clicks_click_idx on public.affiliate_clicks (click_id);
+create index if not exists affiliate_clicks_sponsor_idx on public.affiliate_clicks (sponsor_id, created_at desc);
+
+create table if not exists public.affiliate_conversions (
+  id serial primary key,
+  click_id text not null,
+  sponsor_id integer,
+  event text not null default 'signup',
+  amount double precision not null default 0,
+  commission double precision not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists affiliate_conv_click_idx on public.affiliate_conversions (click_id);
