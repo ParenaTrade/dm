@@ -1699,7 +1699,15 @@ export function LiveStudio({
       </div>
 
       {/* RIGHT: CHAT */}
-      <div className={embedded ? "h-[480px] lg:h-auto lg:min-h-[520px]" : "h-[70vh] min-h-[420px] lg:h-[calc(100vh-2.5rem)]"}>
+      <div
+        className={
+          embedded
+            ? "relative h-[480px] lg:h-auto lg:min-h-[520px]"
+            : "h-[70vh] min-h-[420px] lg:h-[calc(100vh-2.5rem)]"
+        }
+      >
+        {/* Gömülü görünümde sohbet yüksekliği sol sütuna (canlı ekrana) sabitlenir; mesajlar kutunun içinde kayar */}
+        <div className={embedded ? "h-full lg:absolute lg:inset-0" : "h-full"}>
         <ChatPanel
           messages={messages}
           locked={Boolean(stream?.chatLocked)}
@@ -1712,6 +1720,7 @@ export function LiveStudio({
           onSend={sendMessage}
           onModerate={(action, messageId, targetUserId) => void moderate(action, messageId, targetUserId)}
         />
+        </div>
       </div>
     </div>
   );
