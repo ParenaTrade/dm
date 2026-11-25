@@ -16,7 +16,12 @@ export function getRealtimeClient(): SupabaseClient | null {
   if (!realtimeConfigured) return null;
   if (!cached) {
     cached = createClient(URL, ANON, {
-      auth: { persistSession: false, autoRefreshToken: false },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        storageKey: "bb-realtime-anon", // giriş istemcisiyle aynı depolama anahtarını paylaşmasın (GoTrueClient uyarısı)
+      },
       realtime: { params: { eventsPerSecond: 40 } },
     });
   }
