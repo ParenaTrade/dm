@@ -12,6 +12,8 @@ export function ChatPanel({
   onModerate,
   nickname,
   notice,
+  guest = false,
+  onLogin,
 }: {
   messages: ChatMessageInfo[];
   locked: boolean;
@@ -21,6 +23,9 @@ export function ChatPanel({
   onModerate: (action: string, messageId: number, targetUserId?: number) => void;
   nickname: string;
   notice: string | null;
+  /** Girişsiz izleyici: sohbeti okur, yazamaz */
+  guest?: boolean;
+  onLogin?: () => void;
 }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -152,6 +157,14 @@ export function ChatPanel({
 
       {notice && <p className="border-t border-white/10 px-4 py-2 text-xs text-goldsoft">{notice}</p>}
 
+      {guest ? (
+        <div className="border-t border-white/10 p-4 text-center">
+          <p className="text-sm text-white/70">Mesaj yazmak için giriş yapmalısın.</p>
+          <button onClick={() => onLogin?.()} className="btn-gold mt-3 rounded-xl px-6 py-2.5 text-sm font-bold">
+            Giriş Yap / Kayıt Ol
+          </button>
+        </div>
+      ) : (
       <div className="border-t border-white/10 p-3">
         {error && <p className="mb-2 text-xs text-red-300">{error}</p>}
         <div className="flex items-end gap-2">
@@ -190,6 +203,7 @@ export function ChatPanel({
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 }

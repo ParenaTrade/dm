@@ -2,7 +2,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { participants, rtcSignals, streams } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
-import { activeBanCheck, getCurrentUser } from "@/lib/session";
+import { activeBanCheck, getCurrentUser, isGuestViewer } from "@/lib/session";
 import {
   getActiveStream,
   sweepStream,
@@ -73,6 +73,9 @@ export async function POST(request: Request) {
   switch (body.action) {
     case "join": {
       const wantGuest = body.as === "guest" && !isStaff;
+      if (wantGuest && isGuestViewer(user)) {
+        return Response.json({ ok: false, error: "Konuk olmak için giriş yapmalısın." }, { status: 401 });
+      }
       const banned = await activeBanCheck(user.id);
       if (banned) {
         return Response.json({ ok: false, error: "Yayından uzaklaştırıldın." }, { status: 403 });

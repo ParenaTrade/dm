@@ -50,6 +50,8 @@ export function LiveStudio({
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
   const [roomOpen, setRoomOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const guestTriedRef = useRef(false);
   const [swapStage, setSwapStage] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -87,6 +89,8 @@ export function LiveStudio({
 
   const isHost = user?.role === "host";
   const isStaff = isHost || user?.role === "moderator";
+  /** Girişsiz izleyici: yayını izler ama sohbete yazamaz / konuk olamaz */
+  const isGuestViewer = Boolean(user) && !user!.email;
 
   // Rol bazlı sayfalar: stüdyo yalnız yayıncı, moderatör kendi panelinde, izleyici kendi sayfasında.
   const expectedRole = mode === "studio" ? "host" : mode === "moderator" ? "moderator" : "viewer";
@@ -193,20 +197,51 @@ export function LiveStudio({
     });
   }, []);
 
-  /* Giriş ekranında aktif yayın odasını göster */
+  /* Giriş yapılmamışken yayın durumunu izle (yayın açılınca misafir izleme otomatik başlar) */
   useEffect(() => {
     if (user || authLoading) return;
-    void fetch("/api/stream", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => d.ok && setStream(d.stream as StreamInfo))
-      .catch(() => undefined);
+    let cancelled = false;
+    const load = () =>
+      fetch("/api/stream", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!cancelled && d.ok) setStream(d.stream as StreamInfo);
+        })
+        .catch(() => undefined);
+    void load();
+    const timer = setInterval(() => void load(), 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [user, authLoading]);
+
+  /* Girişsiz izleme: yayın canlıysa geçici misafir oturumu aç (izleyici sayfaları için) */
+  useEffect(() => {
+    if (user || authLoading || mode !== "viewer") return;
+    if (stream?.status !== "live" || guestTriedRef.current) return;
+    guestTriedRef.current = true;
+    void fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guest: true }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok && d.user) setUser(d.user as AppUser);
+        else guestTriedRef.current = false;
+      })
+      .catch(() => {
+        guestTriedRef.current = false;
+      });
+  }, [user, authLoading, mode, stream?.status]);
 
   const logout = async () => {
     engine.stopScreen();
     await engine.setMedia("off");
     await fetch("/api/auth", { method: "DELETE" });
     await signOutAuth();
+    guestTriedRef.current = false;
     autoMediaRef.current = false;
     setUser(null);
     setStream(null);
@@ -872,7 +907,13 @@ export function LiveStudio({
                 {stream?.status === "live" ? "CANLI" : "YAYIN DIŞI"}
               </span>
               <span className="rounded-full bg-white/10 px-3 py-1">👁 {liveCount}</span>
-              <span className="hidden rounded-full bg-white/10 px-3 py-1 sm:inline">{user.nickname}</span>
+              {isGuestViewer ? (
+                <button onClick={() => setLoginOpen(true)} className="btn-gold rounded-full px-3 py-1 font-bold">
+                  Giriş yap
+                </button>
+              ) : (
+                <span className="hidden rounded-full bg-white/10 px-3 py-1 sm:inline">{user.nickname}</span>
+              )}
               <Link href="/izle" className="btn-ghost rounded-full px-3 py-1">Tam ekran stüdyo</Link>
             </div>
           </div>
@@ -918,6 +959,9 @@ export function LiveStudio({
             ) : (
               <SystemStatusButton />
             )}
+            {isGuestViewer ? (
+              <span className="rounded-full bg-white/10 px-3 py-1.5 text-white/60">Misafir izleyici</span>
+            ) : (
             <button
               onClick={() => {
                 setRenameValue(user.nickname);
@@ -929,14 +973,21 @@ export function LiveStudio({
             >
               {isHost ? "Yayıncı" : isMod ? "Moderatör" : me?.role === "guest" ? "Konuk" : "İzleyici"} · {user.nickname} ✎
             </button>
+            )}
             {isStaff && (
               <button onClick={() => setShowSettings((v) => !v)} className="btn-ghost rounded-full px-3 py-1.5">
                 ⚙ Ayarlar
               </button>
             )}
-            <button onClick={() => void logout()} className="btn-ghost rounded-full px-3 py-1.5">
-              Çıkış
-            </button>
+            {isGuestViewer ? (
+              <button onClick={() => setLoginOpen(true)} className="btn-gold rounded-full px-3 py-1.5 font-bold">
+                Giriş Yap
+              </button>
+            ) : (
+              <button onClick={() => void logout()} className="btn-ghost rounded-full px-3 py-1.5">
+                Çıkış
+              </button>
+            )}
           </div>
         </div>
         )}
@@ -1371,7 +1422,7 @@ export function LiveStudio({
           ) : (
             !isMod && (
               <button
-                onClick={() => setGuestDialog(true)}
+                onClick={() => (isGuestViewer ? setLoginOpen(true) : setGuestDialog(true))}
                 disabled={me?.role === "guest" || me?.status === "waiting"}
                 className="btn-gold rounded-xl px-5 py-2.5 text-sm font-bold"
               >
@@ -1595,6 +1646,34 @@ export function LiveStudio({
           </div>
         )}
 
+        {/* GİRİŞ (misafir izleyici için) */}
+        {loginOpen && isGuestViewer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/70 p-4">
+            <div className="glass neon-ring relative w-full max-w-md rounded-3xl p-6">
+              <button
+                onClick={() => setLoginOpen(false)}
+                className="absolute right-4 top-4 rounded-full bg-white/10 px-3 py-1 text-xs hover:bg-white/20"
+              >
+                Kapat
+              </button>
+              <p className="font-display text-2xl text-gold">Giriş Yap</p>
+              <p className="mb-4 mt-1 text-sm text-white/60">
+                Yayını girişsiz izleyebilirsin. Sohbete mesaj yazmak ve konuk olmak için giriş yap veya kayıt ol.
+              </p>
+              <AuthForm
+                onDone={(u) => {
+                  autoMediaRef.current = false;
+                  setMe(null);
+                  setMessages([]);
+                  chatCursor.current = 0;
+                  setUser(u);
+                  setLoginOpen(false);
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* GUEST DIALOG */}
         {guestDialog && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
@@ -1628,6 +1707,8 @@ export function LiveStudio({
           staff={Boolean(isStaff)}
           nickname={user.nickname}
           notice={null}
+          guest={isGuestViewer}
+          onLogin={() => setLoginOpen(true)}
           onSend={sendMessage}
           onModerate={(action, messageId, targetUserId) => void moderate(action, messageId, targetUserId)}
         />

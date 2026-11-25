@@ -908,8 +908,10 @@ export function useLiveEngine(params: {
   const startScreen = useCallback(async () => {
     setError(null);
     try {
-      // Sistem sesi DAHİL EDİLMEZ (stüdyodaki konuk/moderatör sesi ekran sesiyle geri dönüp yankı/çınlama yapıyordu);
-      // sekme paylaşımında yalnız o sekmenin sesi gider. Kendi sekmeni listede gösterme.
+      // Site/oyun sesi yayına gitsin: sekme paylaşımında "sekme sesi", ekran/pencere paylaşımında "sistem sesi" dahil.
+      // (Eski ayar systemAudio:"exclude" idi; bu yüzden paylaşılan sitenin sesi canlı ekrana hiç ulaşmıyordu.)
+      // Yankı olmaması için yayıncı konuk/moderatör sesini KULAKLIKLA dinlemeli; sekme paylaşımında
+      // suppressLocalAudioPlayback sekmenin kendi sesini yayıncının hoparlöründen keser.
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 30, max: 30 } },
         audio: {
@@ -918,7 +920,7 @@ export function useLiveEngine(params: {
           autoGainControl: false,
           ...({ suppressLocalAudioPlayback: true } as Record<string, boolean>),
         },
-        ...({ systemAudio: "exclude", selfBrowserSurface: "exclude", surfaceSwitching: "include" } as Record<string, string>),
+        ...({ systemAudio: "include", selfBrowserSurface: "exclude", surfaceSwitching: "include" } as Record<string, string>),
       } as DisplayMediaStreamOptions);
       stream.getVideoTracks().forEach((t) => {
         t.contentHint = "motion";
@@ -930,6 +932,15 @@ export function useLiveEngine(params: {
       localScreenRef.current = stream;
       setLocalScreen(stream);
       for (const [, ctx] of peers.current) attachScreen(ctx);
+      if (!stream.getAudioTracks().length) {
+        setError(
+          "Ekran paylaşıldı ama SES paylaşılmadı. Paylaşım penceresinde “Sekme sesini de paylaş” (veya “Sistem sesini paylaş”) kutusunu işaretle. Ses için en sorunsuz yol: Chrome’da bir SEKME paylaşmak.",
+        );
+      } else {
+        stream.getAudioTracks().forEach((t) => {
+          t.enabled = true;
+        });
+      }
     } catch (err) {
       setError(
         err instanceof Error && err.name === "NotAllowedError"

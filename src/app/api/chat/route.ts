@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { chatMessages, participants, users } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
-import { getCurrentUser } from "@/lib/session";
+import { getCurrentUser, isGuestViewer } from "@/lib/session";
 import { getActiveStream, toParticipantInfo } from "@/lib/stream-service";
 
 export const dynamic = "force-dynamic";
@@ -60,7 +60,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
-  if (!user) return Response.json({ ok: false, error: "Önce giriş yap." }, { status: 401 });
+  if (!user || isGuestViewer(user)) {
+    return Response.json({ ok: false, error: "Mesaj yazmak için giriş yapmalısın." }, { status: 401 });
+  }
 
   const payload: { text?: string } = await request.json().catch(() => ({}));
   const text = (payload.text ?? "").trim().slice(0, 400);

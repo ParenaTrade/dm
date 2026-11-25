@@ -199,14 +199,24 @@ alter table public.giveaways enable row level security;
 alter table public.activity_log enable row level security;
 
 -- Herkese açık yayın listesi + program (okuma)
+-- Politikalar yeniden çalıştırılabilir olsun diye önce silinir (idempotent)
+drop policy if exists "public read schedule" on public.schedule_items;
 create policy "public read schedule" on public.schedule_items
   for select using (true);
+
+drop policy if exists "public read giveaways" on public.giveaways;
 create policy "public read giveaways" on public.giveaways
   for select using (true);
+
+drop policy if exists "public read streams" on public.streams;
 create policy "public read streams" on public.streams
   for select using (true);
+
+drop policy if exists "public read chat" on public.chat_messages;
 create policy "public read chat" on public.chat_messages
   for select using (status = 'visible');
+
+drop policy if exists "public read participants" on public.stream_participants;
 create policy "public read participants" on public.stream_participants
   for select using (status <> 'removed');
 

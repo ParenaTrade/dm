@@ -6,8 +6,7 @@ import { giveaways, moderators, scheduleItems, streams } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
 import { getSiteImages } from "@/lib/site-images";
 import { listItems, listSponsors } from "@/lib/site-content";
-import { LiveStudio } from "@/components/studio/LiveStudio";
-import { Disclosure } from "@/components/site/Disclosure";
+import { HeroBanner } from "@/components/site/HeroBanner";
 import { PromoGrid, SponsorGrid } from "@/components/site/ContentCards";
 import { SiteFooter } from "@/components/site/SiteFooter";
 import { SiteHeader } from "@/components/site/SiteHeader";
@@ -71,10 +70,14 @@ export default async function HomePage() {
           <div className="absolute inset-0 bg-gradient-to-t from-ink via-transparent to-ink/60" />
         </div>
 
-        <div className="relative mx-auto max-w-7xl px-4 pb-6 pt-14 sm:px-6 lg:pt-20">
+        <HeroBanner
+          initialLive={isLive}
+          initialTitle={streamRow?.title ?? "Berkbey Canlı Yayın"}
+          posterUrl={img("banner")}
+        >
           <div className="mb-6 inline-flex items-center gap-3 rounded-full border border-gold/40 bg-gold/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-gold">
-            <span className={isLive ? "live-dot h-2.5 w-2.5 rounded-full bg-red-500" : "h-2.5 w-2.5 rounded-full bg-white/40"} />
-            {isLive ? "Şimdi yayında" : "Yayın dışı — bir sonraki seansı bekle"}
+            <span className="h-2.5 w-2.5 rounded-full bg-white/40" />
+            Yayın dışı — bir sonraki seansı bekle
           </div>
 
           <h1 className="font-display text-6xl leading-[0.9] sm:text-7xl lg:text-8xl">
@@ -97,15 +100,7 @@ export default async function HomePage() {
               Yayın Programı
             </a>
           </div>
-        </div>
-
-        {/* CANLI EKRAN + SOHBET (stüdyo ekranının aynısı) */}
-        <div id="canli" className="relative mx-auto max-w-7xl scroll-mt-24 px-4 pb-14 pt-6 sm:px-6">
-          <LiveStudio mode="viewer" embedded posterUrl={img("banner")} />
-          <div className="mt-3">
-            <Disclosure compact />
-          </div>
-        </div>
+        </HeroBanner>
       </section>
 
       {/* LIVE STRIP */}

@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { participants, users } from "@/db/schema";
 import {
+  createGuestUser,
   createSession,
   destroySession,
   getCurrentUser,
@@ -22,6 +23,19 @@ export const runtime = "nodejs";
 /** Supabase Auth (e-posta + şifre) erişim jetonunu doğrular ve oturum çerezi açar. */
 export async function POST(request: Request) {
   await ensureSeed();
+
+  // Girişsiz izleme: geçici misafir oturumu (sohbete yazamaz, konuk koltuğu isteyemez)
+  const peek: { guest?: boolean; accessToken?: string } = await request
+    .clone()
+    .json()
+    .catch(() => ({}));
+  if (peek.guest) {
+    const existing = await getCurrentUser();
+    if (existing) return Response.json({ ok: true, user: existing });
+    const guest = await createGuestUser();
+    return Response.json({ ok: true, user: toCurrentUser(guest) });
+  }
+
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return Response.json(
       { ok: false, error: "Giriş sistemi yapılandırılmamış (Supabase URL / anon key eksik)." },

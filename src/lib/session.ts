@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt } from "drizzle-orm";
 import { db } from "@/db";
-import { moderators, sessions, users } from "@/db/schema";
+import { moderators, participants, sessions, users } from "@/db/schema";
 
 export const SESSION_COOKIE = "bb_session";
 
@@ -147,6 +147,52 @@ export async function createSession(userId: number) {
     maxAge: 60 * 60 * 24 * 30,
   });
   return token;
+}
+
+/** Girişsiz (misafir) izleyici: e-postası olmayan geçici kullanıcı. Yayını izler, sohbete yazamaz. */
+export function isGuestViewer(user: { email?: string | null } | null | undefined) {
+  return Boolean(user) && !user!.email;
+}
+
+/** Eski misafir kayıtlarını temizle (2 günden eski, e-postasız izleyiciler). */
+async function sweepGuestUsers() {
+  try {
+    const cutoff = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    const old = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(isNull(users.email), eq(users.role, "viewer"), lt(users.lastSeenAt, cutoff)))
+      .limit(200);
+    const ids = old.map((row) => row.id);
+    if (!ids.length) return;
+    await db.delete(participants).where(inArray(participants.userId, ids));
+    await db.delete(sessions).where(inArray(sessions.userId, ids));
+    await db.delete(users).where(inArray(users.id, ids));
+  } catch {
+    /* temizlik başarısız olsa da yayın etkilenmesin */
+  }
+}
+
+/** Misafir izleyici oluşturur ve oturum çerezini açar. */
+export async function createGuestUser(): Promise<DbUser> {
+  if (Math.random() < 0.05) void sweepGuestUsers();
+  let nickname = "";
+  for (let i = 0; i < 8; i += 1) {
+    nickname = `Misafir${Math.floor(10000 + Math.random() * 90000)}`;
+    if (!(await isNicknameTaken(nickname))) break;
+  }
+  const inserted = await db
+    .insert(users)
+    .values({
+      nickname,
+      nicknameLower: nickname.toLocaleLowerCase("tr"),
+      email: null,
+      role: "viewer",
+      accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)],
+    })
+    .returning();
+  await createSession(inserted[0].id);
+  return inserted[0];
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
