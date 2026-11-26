@@ -265,7 +265,7 @@ export function LiveStudio({
       participant?: ParticipantInfo;
     };
     // Durumu değiştiren işlemler herkese anında duyurulur (Realtime) ve kendimiz hemen yenileriz.
-    const mutating = ["start", "stop", "join", "admit", "remove", "layout", "settings", "muteAll", "leave"];
+    const mutating = ["start", "stop", "join", "admit", "invite", "remove", "layout", "settings", "muteAll", "leave"];
     if (result.ok && mutating.includes(String(body.action))) {
       channelRef.current?.send({ type: "state" });
       void refreshRef.current();
@@ -546,6 +546,30 @@ export function LiveStudio({
     } else setNotice(data.error ?? "Eklenemedi");
   };
 
+  const lastHandNoticeRef = useRef(0);
+  const toggleHand = () => {
+    setHandRaised((h) => {
+      const next = !h;
+      // El kaldırınca herkese kısa bir selam bildirimi (spam'e karşı 20 sn bekleme)
+      if (next && user && Date.now() - lastHandNoticeRef.current > 20_000) {
+        lastHandNoticeRef.current = Date.now();
+        channelRef.current?.send({ type: "stage", text: `✋ ${user.nickname} el kaldırdı!` });
+      }
+      return next;
+    });
+  };
+
+  const invite = async (participantId: number) => {
+    const target = participants.find((p) => p.id === participantId);
+    const res = await streamAction({ action: "invite", participantId });
+    if (res && (res as { ok?: boolean }).ok === false) {
+      setNotice((res as { error?: string }).error ?? "Sahneye alınamadı");
+      return;
+    }
+    channelRef.current?.send({ type: "stage", text: `🎤 ${target?.nickname ?? "İzleyici"} selam vermek için sahneye alındı!` });
+    setNotice("Sahneye alındı. Kamera/mikrofonu kendisi açacak.");
+  };
+
   const admit = async (participantId: number) => {
     const target = waiting.find((p) => p.id === participantId);
     await streamAction({ action: "admit", participantId });
@@ -572,6 +596,10 @@ export function LiveStudio({
     [participants, user?.id],
   );
   const waiting = useMemo(() => participants.filter((p) => p.status === "waiting"), [participants]);
+  const raisedHands = useMemo(
+    () => participants.filter((p) => p.status === "live" && p.handRaised && p.role === "viewer" && p.userId !== user?.id),
+    [participants, user?.id],
+  );
   // Realtime bağlıyken canlı sayısını presence'tan oku (milisaniye hassasiyeti)
   const liveCount =
     realtimeLive && presencePeers.length > 0
@@ -1367,6 +1395,27 @@ export function LiveStudio({
             </div>
           )}
 
+          {isStaff && raisedHands.length > 0 && (
+            <div className="mt-3 rounded-2xl border border-amber-400/40 bg-amber-400/10 p-3">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-300">
+                ✋ El kaldıranlar ({raisedHands.length})
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {raisedHands.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2 rounded-xl bg-black/40 px-3 py-2 text-sm">
+                    <span>✋ {p.nickname}</span>
+                    <button
+                      onClick={() => void invite(p.id)}
+                      className="rounded-lg bg-emerald-500/25 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-500/40"
+                    >
+                      Sahneye al
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {isStaff && waiting.length > 0 && (
             <div className="mt-3 rounded-2xl border border-cyan-400/30 bg-cyan-400/5 p-3">
               <p className="mb-2 text-xs font-bold uppercase tracking-wider text-cyan-300">
@@ -1422,7 +1471,7 @@ export function LiveStudio({
           ) : (
             !isMod && (
               <button
-                onClick={() => (isGuestViewer ? setLoginOpen(true) : setGuestDialog(true))}
+                onClick={() => setGuestDialog(true)}
                 disabled={me?.role === "guest" || me?.status === "waiting"}
                 className="btn-gold rounded-xl px-5 py-2.5 text-sm font-bold"
               >
@@ -1533,7 +1582,7 @@ export function LiveStudio({
 
           {!isHost && (
             <button
-              onClick={() => setHandRaised((h) => !h)}
+              onClick={toggleHand}
               className={`btn-ghost rounded-xl px-4 py-2.5 text-sm ${handRaised ? "text-amber-300" : ""}`}
             >
               ✋ {handRaised ? "Eldayım" : "El Kaldır"}
@@ -1680,7 +1729,10 @@ export function LiveStudio({
             <div className="glass neon-ring w-full max-w-sm rounded-3xl p-6">
               <p className="font-display text-2xl text-gold">Konuk Ol</p>
               <p className="mt-2 text-sm text-white/60">
-                Rumuzunla ({user.nickname}) konuk isteği gönderirsin. Onaylanınca sahneye alınırsın.
+                {isGuestViewer
+                  ? `Giriş yapmadan, geçici kimliğinle (${user.nickname}) konuk isteği gönderirsin.`
+                  : `Rumuzunla (${user.nickname}) konuk isteği gönderirsin.`}{" "}
+                Onaylanınca sahneye alınırsın.
               </p>
               <p className="mt-3 text-xs text-white/45">
                 Sahneye alınınca kameran ve mikrofonun kapalı başlar; hazır olunca kendin açarsın.

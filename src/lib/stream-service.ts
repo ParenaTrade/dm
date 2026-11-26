@@ -4,6 +4,8 @@ import { participants, rtcSignals, streams } from "@/db/schema";
 import type { ParticipantInfo, StreamInfo } from "@/lib/types";
 
 const STALE_MS = 60_000;
+/** Yayıncı bu süre boyunca hiç sinyal vermezse (stüdyo kapandı) yayın otomatik bitirilir */
+const HOST_STALE_MS = 90_000;
 
 export async function getActiveStream() {
   const live = await db
@@ -61,6 +63,28 @@ export async function sweepStream(streamId: number) {
       ),
     );
   await db.delete(rtcSignals).where(lt(rtcSignals.createdAt, new Date(Date.now() - 45_000)));
+
+  // Stüdyo "Yayını bitir"e basılmadan kapatıldıysa yayın sonsuza dek "canlı" kalmasın
+  const row = (await db.select().from(streams).where(eq(streams.id, streamId)).limit(1))[0];
+  if (row?.status === "live") {
+    const host = (
+      await db
+        .select()
+        .from(participants)
+        .where(and(eq(participants.streamId, streamId), eq(participants.role, "host")))
+        .orderBy(desc(participants.updatedAt))
+        .limit(1)
+    )[0];
+    const lastSeen = host?.updatedAt ?? row.startedAt;
+    if (!lastSeen || Date.now() - lastSeen.getTime() > HOST_STALE_MS) {
+      await db.update(streams).set({ status: "idle", endedAt: new Date() }).where(eq(streams.id, streamId));
+      await db
+        .update(participants)
+        .set({ status: "left", cameraOn: false, micOn: false, updatedAt: new Date() })
+        .where(eq(participants.streamId, streamId));
+      await db.delete(rtcSignals).where(eq(rtcSignals.streamId, streamId));
+    }
+  }
 }
 
 export async function liveViewerCount(streamId: number) {

@@ -4,6 +4,7 @@ import { asc, desc } from "drizzle-orm";
 import { db } from "@/db";
 import { giveaways, moderators, scheduleItems, streams } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
+import { sweepStream } from "@/lib/stream-service";
 import { getSiteImages } from "@/lib/site-images";
 import { listItems, listSponsors } from "@/lib/site-content";
 import { HeroBanner } from "@/components/site/HeroBanner";
@@ -49,7 +50,12 @@ export default async function HomePage() {
   const imgs = await getSiteImages();
   const img = (slot: string) => imgs[slot]?.url ?? null;
 
-  const [streamRow] = await db.select().from(streams).orderBy(desc(streams.id)).limit(1);
+  let [streamRow] = await db.select().from(streams).orderBy(desc(streams.id)).limit(1);
+  if (streamRow?.status === "live") {
+    // Yayıncı stüdyoyu kapattıysa yayını bitir, sayfa "canlı" sanmasın
+    await sweepStream(streamRow.id).catch(() => undefined);
+    [streamRow] = await db.select().from(streams).orderBy(desc(streams.id)).limit(1);
+  }
   const schedule = await db.select().from(scheduleItems).orderBy(asc(scheduleItems.orderIndex));
   const gifts = await db.select().from(giveaways).orderBy(asc(giveaways.id));
   const mods = await db.select().from(moderators).orderBy(asc(moderators.id));

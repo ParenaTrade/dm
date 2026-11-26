@@ -2,7 +2,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { participants, rtcSignals, streams } from "@/db/schema";
 import { ensureSeed } from "@/lib/seed";
-import { activeBanCheck, getCurrentUser, isGuestViewer } from "@/lib/session";
+import { activeBanCheck, getCurrentUser } from "@/lib/session";
 import {
   getActiveStream,
   sweepStream,
@@ -73,9 +73,6 @@ export async function POST(request: Request) {
   switch (body.action) {
     case "join": {
       const wantGuest = body.as === "guest" && !isStaff;
-      if (wantGuest && isGuestViewer(user)) {
-        return Response.json({ ok: false, error: "Konuk olmak için giriş yapmalısın." }, { status: 401 });
-      }
       const banned = await activeBanCheck(user.id);
       if (banned) {
         return Response.json({ ok: false, error: "Yayından uzaklaştırıldın." }, { status: 403 });
@@ -233,6 +230,25 @@ export async function POST(request: Request) {
         .where(and(eq(participants.id, Number(body.participantId)), eq(participants.streamId, stream.id)))
         .returning();
       return Response.json({ ok: true, participant: updated[0] ? toParticipantInfo(updated[0]) : null });
+    }
+    case "invite": {
+      // El kaldıran izleyiciyi (misafir dahil) sahneye al: konuk rolü + canlı
+      if (!isStaff) return Response.json({ ok: false, error: "Yetki yok" }, { status: 403 });
+      const liveGuests = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(participants)
+        .where(
+          and(eq(participants.streamId, stream.id), eq(participants.role, "guest"), eq(participants.status, "live")),
+        );
+      if ((liveGuests[0]?.count ?? 0) >= stream.guestLimit) {
+        return Response.json({ ok: false, error: "Konuk koltukları dolu." }, { status: 409 });
+      }
+      const invited = await db
+        .update(participants)
+        .set({ role: "guest", status: "live", handRaised: false, updatedAt: new Date() })
+        .where(and(eq(participants.id, Number(body.participantId)), eq(participants.streamId, stream.id)))
+        .returning();
+      return Response.json({ ok: true, participant: invited[0] ? toParticipantInfo(invited[0]) : null });
     }
     case "deny":
     case "remove": {
