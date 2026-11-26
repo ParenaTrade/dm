@@ -137,6 +137,15 @@ TURN_KEY_API_TOKEN=<anahtarın API token'ı>
 3. Yeniden deploy et. Uygulama giriş yapmış her kullanıcı için `/api/turn` üzerinden kısa ömürlü
    (24 saat) TURN şifresi alır; token tarayıcıya hiç gitmez.
 
+**Kartsız ücretsiz alternatif (Metered Open Relay):** metered.ca'da ücretsiz hesap aç, panelden TURN
+kimlik bilgisi REST adresini kopyala ve Vercel'e (gizli) ekle:
+
+```
+TURN_CREDENTIALS_URL=https://<uygulama>.metered.live/api/v1/turn/credentials?apiKey=<API_KEY>
+```
+
+Bu değişken tanımlıysa Cloudflare değişkenlerinden önce kullanılır. Yeniden deploy et.
+
 Alternatif (başka sağlayıcı, sabit şifreli): `NEXT_PUBLIC_TURN_URLS`, `NEXT_PUBLIC_TURN_USERNAME`,
 `NEXT_PUBLIC_TURN_CREDENTIAL` değişkenleri de desteklenir.
 

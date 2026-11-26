@@ -625,6 +625,8 @@ export function useLiveEngine(params: {
 
   const handleDescription = useCallback(async (ctx: PeerCtx, description: RTCSessionDescriptionInit) => {
     const pc = ctx.pc;
+    // Bekleyen teklifimiz yokken gelen "answer" bayat/yinelenmiş sinyaldir (stable durumda uygulanamaz): yok say.
+    if (description.type === "answer" && pc.signalingState === "stable") return;
     const readyForOffer = !ctx.makingOffer && (pc.signalingState === "stable" || ctx.settingRemoteAnswerPending);
     const offerCollision = description.type === "offer" && !readyForOffer;
     ctx.ignoreOffer = !ctx.polite && offerCollision;
